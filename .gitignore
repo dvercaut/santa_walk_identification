@@ -2,4 +2,7 @@ node_modules/
 dist/
 
 .idea/
+.firebase/
+.firebaserc
 yarn.lock
+santa-walk-identification-firebase-adminsdk-9iiz7-4e456d77cf.json
