@@ -25,8 +25,8 @@ var app = new Vue({
     self.db.settings(settings);
 
     self.scanner.addListener('scan', function (content, image) {
-      if (content.slice(0, 15) == 'santa_walk_2018') { //Change depending on year
-        self.db.collection('santa_walk_2018').doc(content).set({
+      if (content.slice(0, 15) == 'santa_walk_2019') { //Change depending on year
+        self.db.collection('santa_walk_2019').doc(content).set({
           'ID': content.slice(16)
         })
         .then(function() {
@@ -107,7 +107,7 @@ async function Winner() {
   arr = [];
   count = 0;
 
-  santaWalkRef = db.collection('santa_walk_2018');
+  santaWalkRef = db.collection('santa_walk_2019');
 
   santaWalkDocs = await santaWalkRef.get()
   .then(snapshot => {
@@ -134,7 +134,7 @@ async function Count() {
   db.settings(settings);
   count = 0;
 
-  santaWalkRef = db.collection('santa_walk_2018');
+  santaWalkRef = db.collection('santa_walk_2019');
 
   santaWalkDocs = await santaWalkRef.get()
   .then(snapshot => {

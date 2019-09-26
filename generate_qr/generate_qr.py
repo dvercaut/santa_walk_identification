@@ -58,7 +58,7 @@ if __name__ == '__main__':
     generateQR("santa_walk_2018_123", "images/tmp/tmp_qr.png")
     append_images(["images/tmp/tmp_qr.png", "images/tmp/tmp_num.png"], "images/santa_walk_combo/santa_walk_123.png")
 
-    for i in tqdm(range(1, 1000)):
-        generateQR("santa_walk_2018_"+str(i), "images/tmp/tmp_qr.png")
+    for i in tqdm(range(1, 1501)):
+        generateQR("santa_walk_2019_"+str(i), "images/tmp/tmp_qr.png")
         generateImage(str(i), "images/tmp/tmp_num.png")
         append_images(["images/tmp/tmp_qr.png", "images/tmp/tmp_num.png"], os.path.join("images/santa_walk_combo", "santa_walk_{}.png".format(str(i))))

@@ -18,10 +18,11 @@ body, html {
   flex-direction: column;
   justify-content: flex-start;
   overflow: auto;
+  font-size: 25px;
 }
 .sidebar h2 {
   font-weight: normal;
-  font-size: 1.0rem;
+  font-size: 25px;
   background: #607d8b;
   color: #fff;
   padding: 10px;
@@ -31,6 +32,7 @@ body, html {
   margin: 0;
   padding: 0;
   list-style-type: none;
+  font-size: 25px;
 }
 .sidebar li {
   line-height: 175%;
@@ -38,6 +40,7 @@ body, html {
   overflow: hidden;
   text-wrap: none;
   text-overflow: ellipsis;
+  font-size: 25px;
 }
 .cameras ul {
   padding: 15px 20px;
@@ -93,16 +96,19 @@ body, html {
   cursor: pointer;
   padding: 14px 16px;
   transition: 0.3s;
+  font-size: 30px;
 }
 
 /* Change background color of buttons on hover */
 .tab button:hover {
   background-color: #ddd;
+  font-size: 30px;
 }
 
 /* Create an active/current tablink class */
 .tab button.active {
   background-color: #ccc;
+  font-size: 30px;
 }
 
 /* Style the tab content */
@@ -111,10 +117,12 @@ body, html {
   padding: 6px 12px;
   border: 1px solid #ccc;
   border-top: none;
+  font-size: 30px;
 }
 
 .tabcontent {
   animation: fadeEffect 1s; /* Fading effect takes 1 second */
+  font-size: 30px;
 }
 
 /* Go from zero to full opacity */
