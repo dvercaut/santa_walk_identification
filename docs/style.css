@@ -18,21 +18,19 @@ body, html {
   flex-direction: column;
   justify-content: flex-start;
   overflow: auto;
-  font-size: 25px;
 }
 .sidebar h2 {
   font-weight: normal;
-  font-size: 25px;
   background: #607d8b;
   color: #fff;
   padding: 10px;
   margin: 0;
+  font-size: 22px;
 }
 .sidebar ul {
   margin: 0;
   padding: 0;
   list-style-type: none;
-  font-size: 25px;
 }
 .sidebar li {
   line-height: 175%;
@@ -40,7 +38,7 @@ body, html {
   overflow: hidden;
   text-wrap: none;
   text-overflow: ellipsis;
-  font-size: 25px;
+  font-size: 19px;
 }
 .cameras ul {
   padding: 15px 20px;

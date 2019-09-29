@@ -19,6 +19,7 @@ var app = new Vue({
   mounted: function () {
     var self = this;
     var arr = [];
+    var count = 0
 
     self.scanner = new Instascan.Scanner({ video: document.getElementById('preview'), scanPeriod: 5, mirror: false});
     self.db = firebase.firestore();
@@ -37,7 +38,34 @@ var app = new Vue({
             console.error("Error writing document: ", error);
         });
       } else if (content.slice(0, 15) == 'santa_walk_2018') {
-          CheckPrevYear(content);
+          // slice id from content to check whether database contains item
+          self.db.collection('santa_walk_2018')
+              .where('ID', '==', content.slice(16))
+              .get()
+              .then(snapshot => {
+                  snapshot.forEach(doc => {
+                    count++
+                    //console.log(doc.id, " => ", doc.data());
+                  });
+                })
+              .catch(err => {
+                console.log('Error getting documents', err);
+              });
+          if (count > 0) {
+            // Add record to next year database
+            db.collection('santa_walk_2019').doc(content).set({
+              'ID': content.slice(16)
+            })
+            .then(function() {
+              console.log("Document successfully written!");
+            })
+            .catch(function(error) {
+                console.error("Error writing document: ", error);
+            });
+          } else {
+            //Flash image here
+            alert("Used QR Code!");
+          }
       } else {
         //Flash image here
         alert("Invalid QR Code!");
@@ -149,45 +177,4 @@ async function Count() {
     console.log('Error getting documents', err);
   });
   document.getElementById('totalCount').innerHTML = count;
-}
-
-async function CheckPrevYear(content) {
-  var db, santaWalkRef, santaWalkDocs, tmp, arr
-
-  db = firebase.firestore();
-  const settings = {/* your settings... */ timestampsInSnapshots: true};
-  db.settings(settings);
-  arr = [];
-
-  // Collect all documents from 2018
-  santaWalkRef = db.collection('santa_walk_2018');
-  santaWalkDocs = await santaWalkRef.get()
-  .then(snapshot => {
-      snapshot.forEach(doc => {
-        arr.push(doc.id);
-        arr.lenght++;
-      });
-    })
-  .catch(err => {
-    console.log('Error getting documents', err);
-  });
-
-  console.log('arr:', arr)
-  console.log('idx:', arr.indexOf('santa_walk_2018_1'))
-
-  if (arr.indexOf(content) == -1) {
-    // Add record to next year database
-    db.collection('santa_walk_2019').doc(content).set({
-      'ID': content.slice(16)
-    })
-    .then(function() {
-      console.log("Document successfully written!");
-    })
-    .catch(function(error) {
-        console.error("Error writing document: ", error);
-    });
-  } else {
-    //Flash image here
-    alert("Invalid QR Code!");
-  }
 }
