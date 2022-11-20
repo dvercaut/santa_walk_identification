@@ -5,97 +5,23 @@ var config = {
         projectId: "santa-walk-identification",
         storageBucket: "santa-walk-identification.appspot.com"
       };
+
 firebase.initializeApp(config);
 
 var app = new Vue({
   el: '#app',
   data: {
-    scanner: null,
-    activeCameraId: null,
-    cameras: [],
     scans: [],
     db: null,
   },
   mounted: function () {
     var self = this;
-    var arr = [];
-    var count = 0
 
-    self.scanner = new Instascan.Scanner({ video: document.getElementById('preview'), scanPeriod: 5, mirror: false});
     self.db = firebase.firestore();
     const settings = {/* your settings... */ timestampsInSnapshots: true};
     self.db.settings(settings);
-
-    self.scanner.addListener('scan', function (content, image) {
-      if (content.slice(0, 15) == 'santa_walk_2019') { //Change depending on year
-        self.db.collection('santa_walk_2019').doc(content).set({
-          'ID': content.slice(16)
-        })
-        .then(function() {
-          console.log("Document successfully written!");
-        })
-        .catch(function(error) {
-            console.error("Error writing document: ", error);
-        });
-      } else if (content.slice(0, 15) == 'santa_walk_2018') {
-          // slice id from content to check whether database contains item
-          self.db.collection('santa_walk_2018')
-              .where('ID', '==', content.slice(16))
-              .get()
-              .then(snapshot => {
-                  snapshot.forEach(doc => {
-                    count++
-                    //console.log(doc.id, " => ", doc.data());
-                  });
-                })
-              .catch(err => {
-                console.log('Error getting documents', err);
-              });
-          if (count > 0) {
-            // Add record to next year database
-            db.collection('santa_walk_2019').doc(content).set({
-              'ID': content.slice(16)
-            })
-            .then(function() {
-              console.log("Document successfully written!");
-            })
-            .catch(function(error) {
-                console.error("Error writing document: ", error);
-            });
-          } else {
-            //Flash image here
-            alert("Used QR Code!");
-          }
-      } else {
-        //Flash image here
-        alert("Invalid QR Code!");
-      }
-      console.log('content:', content)
-      self.scans.unshift({ date: +(Date.now()), content: content });
-    });
-    Instascan.Camera.getCameras().then(function (cameras) {
-      self.cameras = cameras;
-      if (cameras.length > 0) {
-        self.activeCameraId = cameras[0].id;
-        self.scanner.start(cameras[0]);
-      } else {
-        console.error('No cameras found.');
-      }
-    }).catch(function (e) {
-      console.error(e);
-    });
   },
-  methods: {
-    formatName: function (name) {
-      return name || '(unknown)';
-    },
-    selectCamera: function (camera) {
-      this.activeCameraId = camera.id;
-      this.scanner.start(camera);
-    }
-  }
 });
-
 
 /*Functionality for tabs*/
 function openTab(evt, tabname) {
@@ -138,7 +64,7 @@ async function Winner() {
   arr = [];
   count = 0;
 
-  santaWalkRef = db.collection('santa_walk_2019');
+  santaWalkRef = db.collection('santa_walk_2022');
 
   santaWalkDocs = await santaWalkRef.get()
   .then(snapshot => {
@@ -165,7 +91,7 @@ async function Count() {
   db.settings(settings);
   count = 0;
 
-  santaWalkRef = db.collection('santa_walk_2019');
+  santaWalkRef = db.collection('santa_walk_2022');
 
   santaWalkDocs = await santaWalkRef.get()
   .then(snapshot => {

@@ -5,6 +5,7 @@
     <link rel="stylesheet" href="style.css">
     <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/webrtc-adapter/3.3.3/adapter.min.js"></script>
     <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.1.10/vue.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <script type="text/javascript" src="instascan.js"></script>
     <script type="text/javascript" src="https://www.gstatic.com/firebasejs/5.5.5/firebase-app.js"></script>
     <script type="text/javascript" src="https://www.gstatic.com/firebasejs/5.5.5/firebase-firestore.js"></script>
@@ -29,18 +30,6 @@
     <div id="QrScan" class="tabcontent">
       <div id="app">
         <div class="sidebar">
-          <section class="cameras">
-            <h2>Cameras</h2>
-            <ul>
-              <li v-if="cameras.length === 0" class="empty">No cameras found</li>
-              <li v-for="camera in cameras">
-                <span v-if="camera.id == activeCameraId" :title="formatName(camera.name)" class="active">{{ formatName(camera.name) }}</span>
-                <span v-if="camera.id != activeCameraId" :title="formatName(camera.name)">
-                  <a @click.stop="selectCamera(camera)">{{ formatName(camera.name) }}</a>
-                </span>
-              </li>
-            </ul>
-          </section>
           <section class="scans">
             <h2>Scans</h2>
             <ul v-if="scans.length === 0">
@@ -52,11 +41,66 @@
           </section>
         </div>
         <div class="preview-container">
-          <video playsinline controls="true" id="preview"></video>
+          <div id="qr-reader" style="width:800px"></div>
+          <div id="qr-reader-results"></div>
         </div>
       </div>
     </div>
     <script type="text/javascript" src="app.js"></script>
+    <script>
+      // Call QR code functions from another script
+      function docReady(fn) {
+          // see if DOM is already available
+          if (document.readyState === "complete"
+              || document.readyState === "interactive") {
+              // call on next available tick
+              setTimeout(fn, 2);
+          } else {
+              document.addEventListener("DOMContentLoaded", fn);
+          }
+      }
+
+      docReady(function () {
+          var resultContainer = document.getElementById('qr-reader-results');
+          var lastResult, countResults = 0;
+          var results = []
+
+          function onScanSuccess(decodedText, decodedResult) {
+              if (decodedText !== lastResult) {
+                  ++countResults;
+                  lastResult = decodedText;
+                  // Handle on success condition with the decoded message.
+                  console.log(`Scan result ${decodedText}`, decodedResult);
+                  app.$data.scans.unshift({"date": (Date.now()), "content": decodedText});
+              } else {
+                alert(`Scanned!`);
+              }
+
+              console.log(app.$data.scans)
+
+              if (decodedText.slice(0, 15) == 'santa_walk_2022') { //Change depending on year
+                app.$data.db.collection('santa_walk_2022').doc(decodedText).set({
+                  'ID': decodedText.slice(16)
+                })
+                .then(function() {
+                  console.log("Document successfully written!");
+                })
+                .catch(function(error) {
+                    console.error("Error writing document: ", error);
+                });
+              } else {
+                //Flash image here
+                alert("Invalid QR Code!");
+              }
+          }
+
+          var html5QrcodeScanner = new Html5QrcodeScanner(
+              "qr-reader", { fps: 10, qrbox: 500 });
+
+          var delay = 1000; //1 second
+          setTimeout(html5QrcodeScanner.render(onScanSuccess), delay);
+      });
+    </script>
     <script>
     // Get the element with id="defaultOpen" and click on it
     document.getElementById("defaultOpen").click();
