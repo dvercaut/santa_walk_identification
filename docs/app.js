@@ -1,14 +1,17 @@
 import { CONFIG } from './config.js';
-import { parseCode } from './codes.js';
+import { parseCode, searchKeys } from './codes.js';
 import { QrScanner } from './scanner.js';
 
 const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const params = new URLSearchParams(location.search);
 const DEMO = params.get('demo');          // '1' = oefenmodus met echte historiek, 'local' = volledig lokaal (tests)
 const fmtTime = d => d ? d.toLocaleTimeString('nl-BE', { hour: '2-digit', minute: '2-digit' }) : '?';
 const fmtDate = d => d ? d.toLocaleDateString('nl-BE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
 const isToday = d => d && d.toDateString() === new Date().toDateString();
 const fmtWhen = d => !d ? '' : isToday(d) ? fmtTime(d) : `${fmtDate(d)} ${fmtTime(d)}`;
+const NEW = CONFIG.newBands;
+const NEW_TOTAL = NEW.to - NEW.from + 1;
 
 // ---------- Instellingen per toestel ----------
 const settings = {
@@ -24,7 +27,11 @@ const settings = {
 const db = await import('./db.js');
 let store;
 if (DEMO === 'local') {
-  store = new db.MemoryStore(CONFIG, { 'santa_walk_2024_100': '2024', '1501': '2025', 'santa_walk_2023_10': '2023' });
+  // Synthetische historiek voor automatische tests (niet gebruikt in productie).
+  const fake = [];
+  const mk = (coll, ed, n, day, peak) => { for (let i = 0; i < n; i++) { const d = new Date(day); d.setHours(15, 0, 0, 0); d.setMinutes(Math.round((Math.random() + Math.random() + Math.random()) / 3 * 300 + (peak - 17.5) * 60)); fake.push({ coll, id: `${ed === 2025 ? 1600 + i : `santa_walk_${ed}_${200 + i}`}`, key: ed === 2025 ? String(1600 + i) : `santa_walk_${ed}_${200 + i}`, edition: ed, at: d }); } };
+  mk('santa_walk_2025', 2025, 400, '2025-12-20', 17); mk('santa_walk_2024', 2024, 350, '2024-12-21', 17.5);
+  store = new db.MemoryStore(CONFIG, { 'santa_walk_2024_100': '2024', '1501': '2025', '1520': '2025', 'santa_walk_2023_10': '2023', 'santa_walk_2023_100': '2023' }, fake);
 } else {
   store = new db.FirestoreStore(CONFIG, { dryRun: !!DEMO });
 }
@@ -34,9 +41,11 @@ $('title').textContent = `Santa Walk ${CONFIG.year}`;
 document.querySelectorAll('.yearLabel').forEach(e => { e.textContent = CONFIG.year; });
 $('infoCollection').textContent = CONFIG.collection;
 $('infoCodes').textContent = `${CONFIG.plainMin}–${CONFIG.plainMax} en santa_walk_${CONFIG.prefixedYears.join('/')}_<nr>`;
+$('newRange').textContent = `(${NEW.from}–${NEW.to})`;
 
 let giftStock = CONFIG.giftStock;
 let lastStats = { total: 0, docs: [] };
+let pastLoaded = false;
 
 // ---------- Toegangscode ----------
 async function tryLogin(code) {
@@ -64,15 +73,48 @@ const hashCode = new URLSearchParams(location.hash.slice(1)).get('code');
 if (hashCode) history.replaceState(null, '', location.pathname + location.search);
 
 // ---------- Tabs ----------
+async function ensurePast() {
+  if (pastLoaded) return;
+  try { await store.loadAllPast(); pastLoaded = true; } catch (_) { return; }
+  refreshCompareOptions();
+  renderHourly();
+  if ($('pastStats').open) renderPast();
+}
 function showTab(name) {
+  if (name === 'count') ensurePast();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   ['scan', 'lookup', 'count', 'settings'].forEach(t => { $(`tab-${t}`).hidden = t !== name; });
 }
 document.querySelectorAll('.tab').forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
 
-// ---------- Instellingen-UI ----------
-$('scannerName').value = settings.name;
-$('scannerName').addEventListener('change', e => { settings.name = e.target.value.trim(); });
+// ---------- Naam van dit toestel ----------
+function setName(v) {
+  settings.name = v.trim().slice(0, 30);
+  $('nameChipText').textContent = settings.name || 'naam instellen';
+  if (document.activeElement !== $('scannerName')) $('scannerName').value = settings.name;
+}
+function openNameDialog() {
+  $('nameInput').value = settings.name;
+  $('nameDialog').hidden = false;
+  setTimeout(() => $('nameInput').focus(), 50);
+}
+$('nameForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = $('nameInput').value.trim();
+  if (!v) return;
+  setName(v);
+  $('nameDialog').hidden = true;
+});
+$('nameChip').addEventListener('click', openNameDialog);
+let savedTimer;
+$('scannerName').addEventListener('input', e => {
+  setName(e.target.value);
+  $('nameSaved').hidden = false;
+  clearTimeout(savedTimer);
+  savedTimer = setTimeout(() => { $('nameSaved').hidden = true; }, 1500);
+});
+setName(settings.name);
+
 $('soundToggle').checked = settings.sound;
 $('soundToggle').addEventListener('change', e => { settings.sound = e.target.checked; });
 $('vibrateToggle').checked = settings.vibrate;
@@ -97,21 +139,31 @@ function buzz(kind) {
   if (settings.vibrate && navigator.vibrate) navigator.vibrate({ ok: 80, dup: [150, 80, 150], bad: [400] }[kind]);
 }
 
-let resultTimer;
+// Resultaat blijft staan en het scannen pauzeert tot er bevestigd wordt.
+let resultOpen = false;
 function showResult(kind, title, detail, undoKey = null) {
-  const el = $('result');
-  el.className = `result ${kind}`;
+  resultOpen = true;
+  scanner.paused = true;
+  const box = $('result');
+  box.className = `result ${kind}`;
   $('resultTitle').textContent = title;
   $('resultDetail').textContent = detail || '';
+  $('resultNext').textContent = kind === 'ok' ? '✔ Bevestig – volgende' : 'OK – volgende';
   $('resultUndo').hidden = !undoKey;
   $('resultUndo').dataset.key = undoKey || '';
-  el.hidden = false;
-  clearTimeout(resultTimer);
-  resultTimer = setTimeout(() => { el.hidden = true; }, kind === 'ok' ? 2000 : 3500);
+  box.hidden = false;
   beep(kind); buzz(kind);
 }
-$('result').addEventListener('click', e => { if (e.target.id !== 'resultUndo') $('result').hidden = true; });
-$('resultUndo').addEventListener('click', () => undo($('resultUndo').dataset.key));
+function closeResult() {
+  $('result').hidden = true;
+  resultOpen = false;
+  last.t = Date.now();          // hetzelfde bandje dat nog voor de camera hangt, even negeren
+  scanner.paused = false;
+}
+$('resultNext').addEventListener('click', closeResult);
+$('resultUndo').addEventListener('click', async () => {
+  if (await undo($('resultUndo').dataset.key, false)) closeResult();
+});
 
 // ---------- Laatste scans ----------
 const RECENT_KEY = `sw.recent.${CONFIG.year}${DEMO ? '.demo' : ''}`;
@@ -125,38 +177,37 @@ function saveRecent() { localStorage.setItem(RECENT_KEY, JSON.stringify(recent))
 function renderRecent() {
   const ul = $('recent');
   ul.replaceChildren();
-  if (!recent.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Nog geen scans'; ul.append(li); return; }
+  if (!recent.length) { ul.append(el('li', 'empty', 'Nog geen scans')); return; }
   for (const r of recent.slice(0, 20)) {
-    const li = document.createElement('li');
-    li.className = r.kind;
-    const time = document.createElement('span'); time.className = 'time'; time.textContent = fmtTime(new Date(r.t));
-    const txt = document.createElement('span'); txt.className = 'txt'; txt.textContent = r.label;
-    li.append(time, txt);
+    const li = el('li', r.kind);
+    li.append(el('span', 'time', fmtTime(new Date(r.t))), el('span', 'txt', r.label));
     if (r.kind === 'ok' && r.key && Date.now() - r.t < CONFIG.undoWindowSec * 1000) {
-      const b = document.createElement('button'); b.className = 'mini'; b.textContent = '↶';
-      b.title = 'Ongedaan maken'; b.addEventListener('click', () => undo(r.key));
+      const b = el('button', 'mini', '↶'); b.title = 'Ongedaan maken';
+      b.addEventListener('click', () => undo(r.key, true));
       li.append(b);
     }
     ul.append(li);
   }
 }
-setInterval(renderRecent, 15000); // undo-knoppen laten verdwijnen na het venster
+setInterval(renderRecent, 15000);
 
-async function undo(key) {
-  if (!key || !confirm('Deze scan ongedaan maken? Het bandje wordt terug als niet-uitgeleverd gezet.')) return;
+async function undo(key, ask) {
+  if (!key) return false;
+  if (ask && !confirm('Deze scan ongedaan maken? Het bandje staat dan terug als niet-uitgeleverd.')) return false;
   try {
     await store.undo(key);
     const r = recent.find(x => x.key === key && x.kind === 'ok');
     if (r) { r.kind = 'undone'; r.label += ' – ongedaan gemaakt'; }
     saveRecent();
-    $('result').hidden = true;
+    return true;
   } catch (err) {
     alert(err.code === 'permission-denied' ? `Ongedaan maken kan enkel binnen ${CONFIG.undoWindowSec / 60} minuten. Vraag de beheerder.` : `Mislukt: ${err.message}`);
+    return false;
   }
 }
 
 // ---------- Verwerken van een scan ----------
-let last = { text: null, t: 0 };
+const last = { text: null, t: 0 };
 let busy = false;
 
 function describeUsed(res) {
@@ -168,10 +219,10 @@ function describeUsed(res) {
 }
 
 async function handleCode(raw, { manual = false } = {}) {
+  if (resultOpen || busy) return;
   const now = Date.now();
   if (!manual && raw === last.text && now - last.t < CONFIG.sameCodeCooldownMs) return;
-  if (busy) return;
-  last = { text: raw, t: now };
+  last.text = raw; last.t = now;
 
   const parsed = parseCode(raw, CONFIG);
   if (!parsed.ok) {
@@ -181,11 +232,12 @@ async function handleCode(raw, { manual = false } = {}) {
   }
 
   busy = true;
+  scanner.paused = true;
   try {
     const res = await store.register(parsed, settings.name);
     if (res.status === 'duplicate' || res.status === 'history') {
       const why = describeUsed(res);
-      showResult('dup', `⚠ ${parsed.label}`, why);
+      showResult('dup', `⚠ ${parsed.label}`, `${why} – geen pakje`);
       addRecent('dup', `${parsed.label} – ${why}`);
     } else {
       const queued = res.status === 'queued';
@@ -207,29 +259,70 @@ $('manualForm').addEventListener('submit', e => {
   const v = $('manualInput').value.trim();
   if (v) handleCode(v, { manual: true });
   $('manualInput').value = '';
+  $('manualInput').blur();
 });
 
-// ---------- Opzoeken ----------
+// ---------- Opzoeken (breed) ----------
+function scansThisYear() {
+  const m = new Map();
+  for (const d of lastStats.docs) m.set(d.code, { at: db.toDate(d.scannedAt), by: d.scannedBy });
+  if (store.dry) for (const [k, v] of store.dry) m.set(k, v);
+  return m;
+}
+
 $('lookupForm').addEventListener('submit', async e => {
   e.preventDefault();
+  const input = $('lookupInput').value.trim();
   const out = $('lookupResult');
-  const parsed = parseCode($('lookupInput').value, CONFIG);
   out.hidden = false;
-  out.className = 'card lookup';
-  if (!parsed.ok) { out.classList.add('bad'); out.textContent = `✖ ${parsed.reason}`; return; }
-  out.textContent = 'Zoeken…';
-  try {
-    const res = await store.lookup(parsed);
-    if (res.status === 'free') { out.classList.add('ok'); out.textContent = `✔ ${parsed.label}: nog niet uitgeleverd`; }
-    else { out.classList.add('dup'); out.textContent = `⚠ ${parsed.label}: ${describeUsed(res)}`; }
-  } catch (err) {
-    out.classList.add('bad'); out.textContent = `Opzoeken mislukt: ${err.message}`;
+  out.replaceChildren(el('div', 'card muted', 'Zoeken…'));
+  const keys = searchKeys(input, CONFIG);
+  const parsed = parseCode(input, CONFIG);
+  if (!keys.length) { out.replaceChildren(el('div', 'card lookup bad', '✖ Geen nummer gevonden in de invoer')); return; }
+
+  try { await store.loadAllPast(); } catch (_) {}
+  const now = scansThisYear();
+  const hits = [];
+  for (const k of keys) if (now.has(k)) hits.push({ edition: CONFIG.year, coll: CONFIG.collection, id: k, at: now.get(k).at, by: now.get(k).by });
+  for (const [coll, rows] of store.past) {
+    for (const r of rows) if (keys.includes(r.key) || keys.includes(r.id)) hits.push({ edition: r.edition, coll, id: r.id, at: r.at });
   }
+  hits.sort((a, b) => b.edition - a.edition);
+
+  const head = el('div', 'card lookup');
+  if (parsed.ok) {
+    const used = hits.find(h => keyMatches(h, parsed.key));
+    head.classList.add(used ? 'dup' : 'ok');
+    head.append(el('div', 'lk-title', used ? `⚠ ${parsed.label}: al uitgeleverd` : `✔ ${parsed.label}: geldig, nog niet uitgeleverd`));
+    head.append(el('div', 'muted small', used
+      ? `Santa Walk ${used.edition}${used.at ? ` – ${fmtWhen(used.at)}` : ''}${used.by ? ` – ${used.by}` : ''} → geen pakje`
+      : 'Mag een pakje krijgen.'));
+  } else {
+    head.classList.add('bad');
+    head.append(el('div', 'lk-title', `✖ "${input.slice(0, 30)}" is geen geldige bandjescode voor ${CONFIG.year}`));
+    head.append(el('div', 'muted small', parsed.reason));
+  }
+  const list = el('div', 'card');
+  list.append(el('h3', null, hits.length ? `Gevonden in de database (${hits.length})` : 'Niets gevonden in de database'));
+  const ul = el('ul', 'hits');
+  for (const h of hits) {
+    const li = el('li');
+    li.append(el('strong', null, `${h.edition}`), el('span', null, ` ${h.id}`), el('span', 'muted small', ` · ${h.coll}${h.at ? ` · ${fmtWhen(h.at)}` : ''}${h.by ? ` · ${h.by}` : ''}`));
+    ul.append(li);
+  }
+  if (hits.length) list.append(ul);
+  list.append(el('p', 'muted small', `Gezocht op: ${keys.slice(0, 3).join(', ')}${keys.length > 3 ? ` en ${keys.length - 3} varianten` : ''}`));
+  out.replaceChildren(head, list);
 });
+function keyMatches(h, key) {
+  // Alleen sleutels die voor dit jaar als "gebruikt" tellen (zelfde regel als bij scannen).
+  return (h.id === key || h.key === key || (/^\d+$/.test(key) && h.id === key)) &&
+    (h.edition === CONFIG.year || CONFIG.historyCollections.includes(h.coll));
+}
 
 // ---------- Camera ----------
 const scanner = new QrScanner($('video'), text => handleCode(text));
-window.__santaWalk = { handleCode, scanner, store, parseCode };
+window.__santaWalk = { handleCode, scanner, store, parseCode, closeResult };
 
 async function startCamera() {
   unlockAudio();
@@ -260,9 +353,8 @@ async function refreshCameraControls() {
   const cams = await scanner.listCameras();
   const sel = $('cameraSelect');
   sel.replaceChildren(...cams.map((c, i) => {
-    const o = document.createElement('option');
-    o.value = c.deviceId; o.textContent = c.label || `Camera ${i + 1}`;
-    o.selected = c.deviceId === scanner.deviceId;
+    const o = el('option', null, c.label || `Camera ${i + 1}`);
+    o.value = c.deviceId; o.selected = c.deviceId === scanner.deviceId;
     return o;
   }));
   sel.hidden = cams.length < 2;
@@ -305,7 +397,7 @@ $('checkBtn').addEventListener('click', async () => {
   let cams = [];
   try { cams = await scanner.listCameras(); } catch (_) {}
   const ua = navigator.userAgent;
-  const rows = [
+  fillTable('checkTable', [
     ['Browser', ua.match(/(CriOS|FxiOS|EdgiOS|Edg|SamsungBrowser|Firefox|Chrome|Version)\/[\d.]+/g)?.join(' ') || ua.slice(0, 60)],
     ['Toestel', /iPhone|iPad/.test(ua) ? 'iOS' : /Android [\d.]+/.exec(ua)?.[0] || navigator.platform],
     ['Beveiligde verbinding (https)', yes(window.isSecureContext)],
@@ -319,67 +411,185 @@ $('checkBtn').addEventListener('click', async () => {
     ['Scherm blijft aan', yes('wakeLock' in navigator)],
     ['Trillen', yes('vibrate' in navigator)],
     ['Online', yes(navigator.onLine)],
-  ];
-  $('checkTable').tBodies[0].replaceChildren(...rows.map(([k, v]) => {
-    const tr = document.createElement('tr');
-    const a = document.createElement('td'); a.textContent = k;
-    const b = document.createElement('td'); b.textContent = v; b.className = 'num';
-    tr.append(a, b); return tr;
-  }));
+  ]);
 });
 
 // ---------- Teller ----------
+function bandType(d) {
+  const code = String(d.code || '');
+  if (code.startsWith('santa_walk_')) return `Bandjes ${code.slice(11, 15)}`;
+  const n = parseInt(code, 10);
+  if (n >= NEW.from && n <= NEW.to) return 'new';
+  if (n >= CONFIG.uniqueFrom && n < NEW.from) return `Bandjes 2025 (${CONFIG.uniqueFrom}–${NEW.from - 1})`;
+  return 'Andere';
+}
+
 function renderStats({ total, pending, fromCache, docs }) {
   lastStats = { total, docs };
   $('countBadge').textContent = `🎁 ${total}`;
   $('totalCount').textContent = total;
-  $('syncInfo').textContent = DEMO ? 'Oefenmodus: enkel echte scans' : pending ? 'Bezig met synchroniseren…' : fromCache ? 'Offline – laatst gekende stand' : 'Live';
+  $('syncInfo').textContent = DEMO ? 'Oefenmodus: toont enkel echte scans' : pending ? 'Bezig met synchroniseren…' : fromCache ? 'Offline – laatst gekende stand' : 'Live';
+
+  const types = new Map();
+  for (const d of docs) { const t = bandType(d); types.set(t, (types.get(t) || 0) + 1); }
+  const newCount = types.get('new') || 0;
+  types.delete('new');
+  const oldCount = total - newCount;
+  $('newCount').textContent = `${newCount} / ${NEW_TOTAL}`;
+  $('newMeter').style.width = `${Math.min(100, (newCount / NEW_TOTAL) * 100)}%`;
+  $('newInfo').textContent = `${NEW_TOTAL - newCount} nieuwe bandjes nog niet gescand`;
+  $('oldCount').textContent = oldCount;
+  $('oldInfo').textContent = oldCount ? [...types].sort().map(([k, v]) => `${k}: ${v}`).join(' · ') : 'Bandjes 2023, 2024 en 2025 (1501–2250)';
 
   const left = giftStock - total;
   $('stockLeft').textContent = left;
-  $('stockInfo').textContent = `van ${giftStock} bij de start`;
-  const low = left <= CONFIG.giftStockWarnAt;
-  $('stockLeft').classList.toggle('low', low);
-  $('stockBadge').hidden = false;
-  $('stockBadge').textContent = `📦 ${left}`;
-  $('stockBadge').classList.toggle('low', low);
+  $('stockLeft').classList.toggle('low', left <= CONFIG.giftStockWarnAt);
+  $('stockInfo').textContent = `Startvoorraad ${giftStock} – één pakje per geldig bandje, nieuw én oud`;
 
-  const per = new Map(), types = new Map(), buckets = new Map();
-  for (const d of docs) {
-    const by = d.scannedBy || '?';
-    per.set(by, (per.get(by) || 0) + 1);
-    const n = parseInt(d.ID, 10);
-    const type = String(d.code || '').startsWith('santa_walk_') ? `Oud (${d.code.slice(11, 15)})`
-      : n >= 2251 ? 'Nieuw 2026 (2251+)' : n >= 1501 ? 'Over van 2025 (1501-2250)' : 'Andere';
-    types.set(type, (types.get(type) || 0) + 1);
-    const at = db.toDate(d.scannedAt);
-    if (at) {
-      const k = new Date(at); k.setMinutes(Math.floor(k.getMinutes() / 15) * 15, 0, 0);
-      buckets.set(+k, (buckets.get(+k) || 0) + 1);
-    }
-  }
+  const per = new Map();
+  for (const d of docs) { const by = d.scannedBy || '?'; per.set(by, (per.get(by) || 0) + 1); }
   fillTable('perScanner', [...per].sort((a, b) => b[1] - a[1]));
-  fillTable('perType', [...types].sort((a, b) => b[1] - a[1]));
-
-  const max = Math.max(1, ...buckets.values());
-  $('timeline').replaceChildren(...[...buckets].sort((a, b) => a[0] - b[0]).map(([k, c]) => {
-    const row = document.createElement('div'); row.className = 'bar-row';
-    const l = document.createElement('span'); l.textContent = fmtTime(new Date(k));
-    const bar = document.createElement('span'); bar.className = 'bar'; bar.style.width = `${(c / max) * 100}%`;
-    const n = document.createElement('span'); n.className = 'num'; n.textContent = c;
-    row.append(l, bar, n); return row;
-  }));
+  renderHourly();
+  if ($('pastStats').open && pastLoaded) renderPast();
 }
 function fillTable(id, rows) {
-  $(id).tBodies[0].replaceChildren(...rows.map(([k, v]) => {
-    const tr = document.createElement('tr');
-    const a = document.createElement('td'); a.textContent = k;
-    const b = document.createElement('td'); b.textContent = v; b.className = 'num';
-    tr.append(a, b); return tr;
+  $(id).tBodies[0].replaceChildren(...rows.map(([k, ...vals]) => {
+    const tr = el('tr'); tr.append(el('td', null, k), ...vals.map(v => el('td', 'num', v))); return tr;
   }));
 }
 function showStatsError(err) {
   $('syncInfo').textContent = err.code === 'permission-denied' ? 'Geen leesrechten op de teller' : `Fout: ${err.message}`;
+}
+
+// ---------- Aankomsten per uur (dit jaar vs vorige editie) ----------
+// Elke editie valt (bijna) op één dag; testscans op andere dagen tellen niet mee:
+// we nemen per editie de dag met de meeste scans ("hoofddag").
+function mainDay(dates) {
+  const byDay = new Map();
+  for (const d of dates) { const k = d.toDateString(); byDay.set(k, (byDay.get(k) || 0) + 1); }
+  let best = null, n = 0;
+  for (const [k, c] of byDay) if (c > n) { best = k; n = c; }
+  return best ? { day: best, dates: dates.filter(d => d.toDateString() === best), other: dates.length - n } : { day: null, dates: [], other: 0 };
+}
+function perHour(dates) { const h = new Array(24).fill(0); for (const d of dates) h[d.getHours()]++; return h; }
+function pastDates(year) {
+  const out = [];
+  for (const rows of store.past.values()) for (const r of rows) if (r.edition === year && r.at) out.push(r.at);
+  return out;
+}
+function refreshCompareOptions() {
+  const sel = $('compareYear');
+  const years = new Set();
+  for (const rows of store.past.values()) for (const r of rows) if (r.at && r.edition) years.add(r.edition);
+  const list = [...years].sort((a, b) => b - a);
+  const cur = sel.value;
+  sel.replaceChildren(...list.map(y => { const o = el('option', null, y); o.value = y; return o; }));
+  if (list.length) sel.value = list.includes(+cur) ? cur : list[0];
+}
+$('compareYear').addEventListener('change', renderHourly);
+
+function renderHourly() {
+  const nowDates = lastStats.docs.map(d => db.toDate(d.scannedAt)).filter(Boolean);
+  const cur = mainDay(nowDates);
+  const cmpYear = parseInt($('compareYear').value, 10);
+  const cmp = Number.isFinite(cmpYear) ? mainDay(pastDates(cmpYear)) : { dates: [], day: null };
+  const a = perHour(cur.dates), b = perHour(cmp.dates);
+  const used = [...Array(24).keys()].filter(h => a[h] || b[h]);
+  const from = used.length ? Math.min(...used) : 14, to = used.length ? Math.max(...used) : 20;
+  const hours = []; for (let h = from; h <= to; h++) hours.push(h);
+  const max = Math.max(1, ...hours.map(h => Math.max(a[h], b[h])));
+
+  // SVG: gegroepeerde staven per uur
+  const W = 640, H = 260, padL = 46, padB = 34, padT = 12;
+  const bw = (W - padL - 8) / hours.length;
+  const y = v => H - padB - (v / max) * (H - padB - padT);
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const add = (tag, attrs, text) => { const n = document.createElementNS(ns, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; svg.append(n); return n; };
+  for (const t of [0, 0.5, 1]) {
+    const v = Math.round(max * t), yy = y(v);
+    add('line', { x1: padL, x2: W - 4, y1: yy, y2: yy, class: 'grid' });
+    add('text', { x: padL - 8, y: yy + 7, class: 'axis', 'text-anchor': 'end' }, v);
+  }
+  hours.forEach((h, i) => {
+    const x = padL + i * bw;
+    const w = Math.max(3, bw * 0.36);
+    if (cmp.day) add('rect', { x: x + bw * 0.12, y: y(b[h]), width: w, height: H - padB - y(b[h]), rx: 2, class: 'bar-prev' }).append(Object.assign(document.createElementNS(ns, 'title'), { textContent: `${cmpYear} ${h}u: ${b[h]}` }));
+    add('rect', { x: x + bw * 0.12 + w + 2, y: y(a[h]), width: w, height: H - padB - y(a[h]), rx: 2, class: 'bar-now' }).append(Object.assign(document.createElementNS(ns, 'title'), { textContent: `${CONFIG.year} ${h}u: ${a[h]}` }));
+    add('text', { x: x + bw / 2, y: H - 6, class: 'axis', 'text-anchor': 'middle' }, `${h}u`);
+  });
+  const legend = el('div', 'legend');
+  legend.append(el('span', 'lg now', `${CONFIG.year}${cur.day ? ` (${fmtDate(new Date(cur.day))})` : ''}`));
+  if (cmp.day) legend.append(el('span', 'lg prev', `${cmpYear} (${fmtDate(new Date(cmp.day))})`));
+  $('hourChart').replaceChildren(svg, legend);
+
+  const peak = (arr) => { let h = -1, v = 0; arr.forEach((c, i) => { if (c > v) { v = c; h = i; } }); return h < 0 ? null : { h, v }; };
+  const pa = peak(a), pb = peak(b);
+  const info = [];
+  if (pb) info.push(`Drukste uur ${cmpYear}: ${pb.h}u–${pb.h + 1}u (${pb.v} scans, ${Math.round(pb.v / Math.max(1, cmp.dates.length) * 100)}% van die dag).`);
+  if (pa) info.push(`Dit jaar tot nu: ${pa.h}u–${pa.h + 1}u (${pa.v}).`);
+  if (cmp.other) info.push(`${cmp.other} scans van ${cmpYear} op andere dagen niet meegeteld.`);
+  if (!pb && !Number.isFinite(cmpYear)) info.push(pastLoaded ? 'Geen tijdstippen beschikbaar voor vorige edities.' : 'Vorige edities laden…');
+  $('hourInfo').textContent = info.join(' ');
+  $('hourCmpHead').textContent = Number.isFinite(cmpYear) ? cmpYear : '';
+  fillTable('hourTable', hours.map(h => [`${String(h).padStart(2, '0')}:00`, a[h], cmp.day ? b[h] : '']).map(([h, x, z]) => [h, x, z]));
+}
+
+// ---------- Vorige edities ----------
+$('pastStats').addEventListener('toggle', async () => {
+  if (!$('pastStats').open) return;
+  if (!pastLoaded) { $('pastBody').textContent = 'Laden…'; await ensurePast(); }
+  if (pastLoaded) renderPast();
+});
+
+function renderPast() {
+  const editions = new Map(); // jaar -> {count, colls: Map, nums: [], plain, prefixed}
+  const thisYear = new Set(lastStats.docs.map(d => d.code));
+  for (const [coll, rows] of store.past) {
+    for (const r of rows) {
+      const y = r.edition || parseInt(coll.slice(-4), 10);
+      if (!editions.has(y)) editions.set(y, { count: 0, colls: new Map(), nums: [], plain: 0, prefixed: 0, keys: [] });
+      const e = editions.get(y);
+      e.count++;
+      e.colls.set(coll, (e.colls.get(coll) || 0) + 1);
+      const n = parseInt(String(r.id).match(/(\d+)$/)?.[1], 10);
+      if (Number.isFinite(n)) e.nums.push(n);
+      if (/^\d+$/.test(r.id)) e.plain++; else e.prefixed++;
+      if (r.key) e.keys.push(r.key);
+    }
+  }
+  const body = $('pastBody');
+  body.className = '';
+  body.replaceChildren();
+  const table = el('table', 'past');
+  const tb = el('tbody');
+  const cur = el('tr', 'current'); cur.append(el('td', null, `${CONFIG.year} (nu)`), el('td', 'num', lastStats.total)); tb.append(cur);
+  for (const [y, e] of [...editions].sort((a, b) => b[0] - a[0])) {
+    const tr = el('tr', 'clickable'); tr.append(el('td', null, `${y} ›`), el('td', 'num', e.count));
+    const det = el('tr', 'detail'); det.hidden = true;
+    const td = el('td'); td.colSpan = 2;
+    const min = Math.min(...e.nums), max = Math.max(...e.nums);
+    const lines = [
+      `Collectie: ${[...e.colls].map(([c, n]) => `${c} (${n})`).join(', ')}`,
+      `Nummers: ${e.nums.length ? `${min}–${max}` : '–'}`,
+      `QR-formaat: ${e.plain && e.prefixed ? `${e.prefixed}× santa_walk_${y}_<nr>, ${e.plain}× enkel nummer` : e.plain ? 'enkel nummer' : `santa_walk_${y}_<nr>`}`,
+    ];
+    if (e.nums.length && y >= Math.min(...CONFIG.prefixedYears)) {
+      const seen = new Set(e.nums);
+      const never = max - min + 1 - seen.size;
+      lines.push(`Nummers tussen ${min} en ${max} die toen niet gescand zijn: ${never} (bandjes die nog geldig kunnen opduiken)`);
+      const again = e.keys.filter(k => thisYear.has(k)).length;
+      if (again) lines.push(`⚠ ${again} hiervan dit jaar opnieuw gescand (zou geweigerd moeten zijn)`);
+    }
+    for (const l of lines) td.append(el('div', 'small', l));
+    det.append(td);
+    tr.addEventListener('click', () => { det.hidden = !det.hidden; });
+    tb.append(tr, det);
+  }
+  table.append(tb);
+  const totalAll = [...editions.values()].reduce((s, e) => s + e.count, 0) + lastStats.total;
+  body.append(table, el('p', 'muted small', `Totaal alle edities: ${totalAll}. Tik op een jaar voor details.`));
 }
 
 $('boardBtn').addEventListener('click', () => {
@@ -392,13 +602,14 @@ $('boardClose').addEventListener('click', () => {
 });
 
 $('exportBtn').addEventListener('click', () => {
-  const rows = [['code', 'nummer', 'tijdstip', 'scanner']];
+  const rows = [['code', 'nummer', 'soort', 'tijdstip', 'scanner']];
   for (const d of lastStats.docs) {
     const at = db.toDate(d.scannedAt);
-    rows.push([d.code || '', d.ID || '', at ? at.toISOString() : '', d.scannedBy || '']);
+    const t = bandType(d);
+    rows.push([d.code || '', d.ID || '', t === 'new' ? `Nieuw ${CONFIG.year}` : t, at ? at.toISOString() : '', d.scannedBy || '']);
   }
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
-  const a = document.createElement('a');
+  const a = el('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
   a.download = `${CONFIG.collection}.csv`;
   a.click();
@@ -414,6 +625,7 @@ renderRecent();
 let unwatch = null;
 async function afterLogin() {
   unwatch = store.watch(renderStats, showStatsError);
+  if (!settings.name) openNameDialog();
   const s = await store.settings();
   if (Number.isFinite(s.giftStock)) { giftStock = s.giftStock; renderStats({ ...lastStats, pending: false, fromCache: false }); }
   const h = await store.loadHistory();

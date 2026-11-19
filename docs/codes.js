@@ -42,3 +42,25 @@ export function keyFromDocId(id, cfg) {
   const p = parseCode(id, loose);
   return p.ok ? p.key : null;
 }
+
+/** Editie (jaar) waarin een document uit een collectie werkelijk gescand is. */
+export function editionOf(collectionName, key, cfg) {
+  const year = parseInt(collectionName.slice(-4), 10);
+  if (/^\d+$/.test(key) && parseInt(key, 10) >= cfg.uniqueFrom) return Math.max(year, cfg.plainSince);
+  return year;
+}
+
+/**
+ * Breed zoeken: alle sleutels die bij een ingegeven nummer of code kunnen horen.
+ * "2251" → ["2251", "santa_walk_2018_2251", …];  "100" → ["100", "santa_walk_2018_100", …]
+ */
+export function searchKeys(input, cfg) {
+  const text = String(input ?? '').trim();
+  const m = text.match(/(\d{1,5})\s*$/);
+  if (!m) return [];
+  const n = parseInt(m[1], 10);
+  const years = new Set([...cfg.statsCollections.map(c => parseInt(c.slice(-4), 10)), ...cfg.prefixedYears, cfg.year]);
+  const keys = new Set([String(n)]);
+  for (const y of [...years].sort()) keys.add(n >= cfg.uniqueFrom ? String(n) : `santa_walk_${y}_${n}`);
+  return [...keys];
+}

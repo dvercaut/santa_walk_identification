@@ -41,6 +41,7 @@ export class QrScanner {
     this.stream = null;
     this.track = null;
     this.running = false;
+    this.paused = false;   // true = camera loopt, maar er wordt niet gedecodeerd (wacht op bevestiging)
     this.engine = null;
     this._detectorPromise = null;
     this._timer = null;
@@ -149,10 +150,10 @@ export class QrScanner {
   async _loop() {
     if (!this.running) return;
     const v = this.video;
-    if (v.readyState >= 2 && v.videoWidth > 0 && document.visibilityState === 'visible') {
+    if (!this.paused && v.readyState >= 2 && v.videoWidth > 0 && document.visibilityState === 'visible') {
       try {
         const codes = await this.detector.detect(v);
-        if (codes.length && this.running) this.onCode(codes[0].rawValue);
+        if (codes.length && this.running && !this.paused) this.onCode(codes[0].rawValue);
       } catch (_) { /* tijdelijke decodefout: volgende frame */ }
     }
     // ~8 fps: snel genoeg voor bandjes, spaart batterij en houdt oudere toestellen vlot.

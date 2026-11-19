@@ -12,6 +12,17 @@ export const CONFIG = {
   // uitgeleverd en worden geweigerd als "al uitgeleverd".
   historyCollections: ['santa_walk_2023', 'santa_walk_2024', 'santa_walk_2025'],
 
+  // Alle collecties van vorige edities (voor statistieken en opzoeken).
+  statsCollections: ['santa_walk_2018', 'santa_walk_2019', 'santa_walk_2022',
+                     'santa_walk_2023', 'santa_walk_2024', 'santa_walk_2025'],
+
+  // Nieuw bestelde bandjes van dit jaar (Excel Orakel 2026: 2251-2750 = 500 stuks).
+  newBands: { from: 2251, to: 2750 },
+
+  // Bandjes met enkel een nummer (>= uniqueFrom) bestaan sinds deze editie.
+  // Zo wordt bv. "1520" in de collectie santa_walk_2024 correct als 2025 geteld.
+  plainSince: 2025,
+
   // Welke QR-inhoud is een geldig bandje?
   //  1. Enkel een nummer, bv. "2251" (sinds 2025 zo gedrukt door Orakel).
   //  2. "santa_walk_<jaar>_<nr>", bv. "santa_walk_2024_100" (bandjes 2023-2024).
@@ -22,8 +33,9 @@ export const CONFIG = {
   prefixedYears: [2023, 2024, 2025, 2026],
   uniqueFrom: 1501,
 
-  // Aantal sinterklaaspakjes in voorraad bij de start. Overschrijfbaar zonder
-  // nieuwe deploy via Firestore: document santa_walk_settings/<year>, veld giftStock.
+  // Sinterklaaspakjes in voorraad bij de start (mail Carl: "nog 459 sinterklaaspakjes
+  // op stock"). Een pakje gaat naar élk geldig bandje, nieuw of oud.
+  // Overschrijfbaar zonder deploy: Firestore santa_walk_settings/<year>, veld giftStock.
   giftStock: 459,
   giftStockWarnAt: 50,
 

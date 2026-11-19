@@ -10,7 +10,7 @@ import {
   onSnapshot, serverTimestamp,
 } from './vendor/firebase/firebase-firestore.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from './vendor/firebase/firebase-auth.js';
-import { keyFromDocId } from './codes.js';
+import { keyFromDocId, editionOf } from './codes.js';
 
 const TX_TIMEOUT_MS = 5000;
 
@@ -26,8 +26,6 @@ export function toDate(ts) {
   return null;
 }
 
-function editionOf(collectionName) { return collectionName.replace('santa_walk_', ''); }
-
 export class FirestoreStore {
   constructor(cfg, { dryRun = false } = {}) {
     this.cfg = cfg;
@@ -40,6 +38,7 @@ export class FirestoreStore {
     this.auth = getAuth(this.app);
     this.col = collection(this.db, cfg.collection);
     this.history = new Map();   // key -> { edition, at }
+    this.past = new Map();      // collectie -> [{id, key, edition, at}]
     this.historyLoaded = false;
     this.dry = new Map();       // oefenmodus: scans enkel in geheugen
   }
@@ -48,21 +47,67 @@ export class FirestoreStore {
   login(code) { return signInWithEmailAndPassword(this.auth, this.cfg.sharedAccountEmail, code); }
   logout() { return signOut(this.auth); }
 
-  /** Laadt alle scans van vorige edities in het geheugen (snelle, offline controle). */
+  /**
+   * Leest één collectie van een vorige editie (één keer per sessie).
+   * Via de REST-API: die geeft ook createTime terug, het enige tijdstip dat de
+   * oude scans (2018-2025) hebben. Valt terug op de SDK (zonder tijdstip) als dat faalt.
+   */
+  async loadCollection(name) {
+    if (this.past.has(name)) return this.past.get(name);
+    let raw;
+    try {
+      raw = await this._restList(name);
+    } catch (e) {
+      console.warn('REST-lijst mislukt, terugval op SDK:', name, e);
+      const snap = await getDocs(collection(this.db, name));
+      raw = snap.docs.map(d => ({ id: d.id, at: toDate(d.data().scannedAt) }));
+    }
+    const rows = raw.map(r => {
+      const key = keyFromDocId(r.id, this.cfg);
+      return { id: r.id, key, edition: key ? editionOf(name, key, this.cfg) : null, at: r.at };
+    });
+    this.past.set(name, rows);
+    return rows;
+  }
+
+  async _restList(name) {
+    const token = await this.auth.currentUser?.getIdToken();
+    if (!token) throw new Error('niet aangemeld');
+    const rows = [];
+    let pageToken = '';
+    do {
+      const u = new URL(`https://firestore.googleapis.com/v1/projects/${this.cfg.firebase.projectId}/databases/(default)/documents/${name}`);
+      u.searchParams.set('pageSize', '500');
+      u.searchParams.set('mask.fieldPaths', 'scannedAt');
+      if (pageToken) u.searchParams.set('pageToken', pageToken);
+      const r = await fetch(u, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      for (const d of j.documents || []) {
+        const ts = d.fields?.scannedAt?.timestampValue || d.createTime;
+        rows.push({ id: decodeURIComponent(d.name.split('/').pop()), at: ts ? new Date(ts) : null });
+      }
+      pageToken = j.nextPageToken || '';
+    } while (pageToken);
+    return rows;
+  }
+
+  /** Laadt de scans van vorige edities die nog geldige bandjes kunnen bevatten (controle "al uitgeleverd"). */
   async loadHistory() {
     const results = await Promise.allSettled(this.cfg.historyCollections.map(async name => {
-      const snap = await getDocs(collection(this.db, name));
-      snap.forEach(d => {
-        const key = keyFromDocId(d.id, this.cfg);
-        if (key && !this.history.has(key)) {
-          this.history.set(key, { edition: editionOf(name), at: toDate(d.data().scannedAt) });
-        }
-      });
-      return snap.size;
+      for (const r of await this.loadCollection(name)) {
+        if (r.key && !this.history.has(r.key)) this.history.set(r.key, { edition: String(r.edition), at: r.at });
+      }
     }));
     this.historyLoaded = results.every(r => r.status === 'fulfilled');
     return { loaded: this.historyLoaded, size: this.history.size,
       failed: results.filter(r => r.status === 'rejected').map(r => r.reason?.code || r.reason?.message) };
+  }
+
+  /** Alle vorige edities (statistieken, breed zoeken). */
+  async loadAllPast() {
+    await Promise.allSettled(this.cfg.statsCollections.map(n => this.loadCollection(n)));
+    return this.past;
   }
 
   async settings() {
@@ -139,13 +184,24 @@ export class FirestoreStore {
 }
 
 export class MemoryStore {
-  constructor(cfg, history = {}) {
+  constructor(cfg, history = {}, extraPast = []) {
     this.cfg = cfg;
     this.map = new Map();
     this.history = new Map(Object.entries(history).map(([k, e]) => [k, { edition: e, at: null }]));
     this.historyLoaded = true;
     this.listeners = new Set();
+    this.past = new Map();
+    for (const [k, e] of Object.entries(history)) {
+      const name = `santa_walk_${e === '2025' && /^\d+$/.test(k) ? '2024' : e}`;
+      if (!this.past.has(name)) this.past.set(name, []);
+      this.past.get(name).push({ id: k, key: k, edition: parseInt(e, 10), at: null });
+    }
+    for (const r of extraPast) {
+      if (!this.past.has(r.coll)) this.past.set(r.coll, []);
+      this.past.get(r.coll).push(r);
+    }
   }
+  async loadAllPast() { return this.past; }
   onUser(cb) { cb({ email: 'lokaal' }); return () => {}; }
   async login() {}
   async logout() {}

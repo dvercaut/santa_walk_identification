@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#b71c1c">
+  <meta name="theme-color" content="#1e4a37">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Santa Walk">
@@ -18,7 +18,6 @@
   <header class="topbar">
     <div class="brand"><img src="santa_claus.png" alt=""><span id="title">Santa Walk</span></div>
     <div class="status">
-      <span id="stockBadge" class="badge" title="Pakjes over" hidden></span>
       <span id="countBadge" class="badge" title="Uitgeleverd dit jaar">–</span>
       <span id="netDot" class="dot" title="Verbinding"></span>
     </div>
@@ -38,6 +37,16 @@
     </form>
   </section>
 
+  <!-- Naam van dit toestel -->
+  <div id="nameDialog" class="modal" hidden>
+    <form id="nameForm" class="card">
+      <h2>Naam van dit toestel</h2>
+      <p class="muted">Zo zie je in de teller en bij dubbele scans wie het bandje gescand heeft.</p>
+      <input id="nameInput" maxlength="30" autocomplete="off" placeholder="bv. Kraam 1, OnePlus, Pixel" required>
+      <button type="submit" class="primary">Opslaan</button>
+    </form>
+  </div>
+
   <main id="mainView" hidden>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="scan" role="tab">Scannen</button>
@@ -48,13 +57,17 @@
 
     <!-- Scannen -->
     <section id="tab-scan" class="view">
+      <button id="nameChip" class="chip" title="Naam van dit toestel wijzigen">📱 <span id="nameChipText">–</span> ✎</button>
       <div class="camera">
         <video id="video" playsinline muted autoplay></video>
         <div class="frame" aria-hidden="true"></div>
         <div id="result" class="result" hidden>
           <div id="resultTitle" class="result-title"></div>
           <div id="resultDetail" class="result-detail"></div>
-          <button id="resultUndo" class="undo" hidden>↶ Ongedaan maken</button>
+          <div class="result-actions">
+            <button id="resultNext" class="next">Volgende ›</button>
+            <button id="resultUndo" class="undo" hidden>↶ Ongedaan maken</button>
+          </div>
         </div>
         <button id="startBtn" class="start primary">📷 Start camera</button>
         <p id="camError" class="cam-error" role="alert" hidden></p>
@@ -79,53 +92,72 @@
     <!-- Opzoeken -->
     <section id="tab-lookup" class="view" hidden>
       <form id="lookupForm" class="card">
-        <h3>Status van een bandje</h3>
-        <p class="muted small">Zonder iets te registreren. Handig bij "ik heb nog geen pakje gehad".</p>
+        <h3>Bandje opzoeken</h3>
+        <p class="muted small">Registreert niets. Zoekt breed: "100" vindt ook santa_walk_2023_100 en santa_walk_2024_100.</p>
         <div class="manual">
-          <input id="lookupInput" inputmode="numeric" autocomplete="off" placeholder="bv. 2251 of santa_walk_2024_100" aria-label="Bandje opzoeken">
+          <input id="lookupInput" autocomplete="off" placeholder="bv. 2251, 100 of santa_walk_2024_100" aria-label="Bandje opzoeken">
           <button type="submit">Zoek</button>
         </div>
       </form>
-      <div id="lookupResult" class="card lookup" hidden></div>
+      <div id="lookupResult" hidden></div>
     </section>
 
     <!-- Teller -->
     <section id="tab-count" class="view" hidden>
       <div id="bigBoard" class="board">
         <button id="boardClose" class="board-close" hidden>✕</button>
-        <div class="card center">
-          <div class="label">Pakjes uitgeleverd <span class="yearLabel"></span></div>
+        <div class="card center hero">
+          <div class="label">Uitgeleverd op de Santa Walk <span class="yearLabel"></span></div>
           <div id="totalCount" class="big">–</div>
           <div id="syncInfo" class="muted"></div>
         </div>
+        <div class="split">
+          <div class="card center">
+            <div class="label">Nieuwe bandjes <span id="newRange"></span></div>
+            <div id="newCount" class="mid">–</div>
+            <div class="meter"><span id="newMeter"></span></div>
+            <div id="newInfo" class="muted small"></div>
+          </div>
+          <div class="card center">
+            <div class="label">Bandjes van vroegere jaren</div>
+            <div id="oldCount" class="mid">–</div>
+            <div id="oldInfo" class="muted small"></div>
+          </div>
+        </div>
         <div class="card center">
-          <div class="label">Pakjes nog in voorraad</div>
-          <div id="stockLeft" class="big">–</div>
-          <div id="stockInfo" class="muted"></div>
+          <div class="label">Sinterklaaspakjes nog in voorraad</div>
+          <div id="stockLeft" class="mid">–</div>
+          <div id="stockInfo" class="muted small"></div>
         </div>
       </div>
       <button id="boardBtn">📺 Groot scherm</button>
-      <div class="card">
-        <h3>Soort bandje</h3>
-        <table id="perType"><tbody></tbody></table>
-      </div>
       <div class="card">
         <h3>Per scanner</h3>
         <table id="perScanner"><tbody></tbody></table>
       </div>
       <div class="card">
-        <h3>Per kwartier</h3>
-        <div id="timeline" class="timeline"></div>
+        <div class="card-head">
+          <h3>Aankomsten per uur</h3>
+          <label class="small">vs <select id="compareYear" aria-label="Vergelijk met editie"></select></label>
+        </div>
+        <div id="hourChart" class="chart" role="img" aria-label="Aantal scans per uur, dit jaar en vergelijkingsjaar"></div>
+        <div id="hourInfo" class="muted small"></div>
+        <details class="sub"><summary>Tabel per uur</summary><table id="hourTable" class="hours"><thead><tr><th>Uur</th><th class="num yearLabel"></th><th class="num" id="hourCmpHead"></th></tr></thead><tbody></tbody></table></details>
       </div>
-      <button id="exportBtn">⬇️ Exporteer CSV</button>
+      <details id="pastStats" class="card">
+        <summary>Vorige edities</summary>
+        <div id="pastBody" class="muted">Laden…</div>
+      </details>
+      <button id="exportBtn">⬇️ Exporteer CSV <span class="yearLabel"></span></button>
     </section>
 
     <!-- Meer -->
     <section id="tab-settings" class="view" hidden>
       <div class="card">
-        <label>Naam van deze scanner (bv. "Kraam 1")
-          <input id="scannerName" maxlength="30">
+        <label>Naam van dit toestel
+          <input id="scannerName" maxlength="30" autocomplete="off">
         </label>
+        <p id="nameSaved" class="muted small" hidden>✔ Opgeslagen</p>
         <label class="row"><input id="soundToggle" type="checkbox"> Geluid bij scan</label>
         <label class="row"><input id="vibrateToggle" type="checkbox"> Trillen bij scan</label>
       </div>
