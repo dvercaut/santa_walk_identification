@@ -10,13 +10,23 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Aangemeld met het gedeelde scanner-account (één toegangscode).
+    // Twee gedeelde accounts, elk met één toegangscode.
     // Expliciet op e-mail: "Anonymous" sign-in staat aan in dit project, en een
     // anonieme gebruiker mag NIET als medewerker gelden.
-    // Noodoplossing zonder login: vervang door `return true;` en zet requireLogin: false in config.js.
+    function isScanner() {
+      return request.auth != null && request.auth.token.email == 'scanner@santawalk.app';
+    }
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'admin@santawalk.app';
+    }
     function isStaff() {
-      return request.auth != null
-        && request.auth.token.email == 'scanner@santawalk.app';
+      return isScanner() || isAdmin();
+    }
+
+    // Scanners lezen enkel de laatste 3 edities + dit jaar (nodig voor "al ingescand").
+    function recentEdition(coll) {
+      return coll.matches('santa_walk_[0-9]{4}')
+        && int(coll.split('_')[2]) >= request.time.year() - 3;
     }
 
     function currentYearCollection(coll) {
@@ -29,7 +39,8 @@ service cloud.firestore {
 
     // Scans per editie: santa_walk_2023, santa_walk_2024, …
     match /{coll}/{key} {
-      allow read: if isStaff() && coll.matches('santa_walk_[0-9]{4}');
+      allow read: if (isAdmin() && coll.matches('santa_walk_[0-9]{4}'))
+        || (isScanner() && recentEdition(coll));
 
       // Enkel in de collectie van het lopende jaar, enkel nieuw (eerste scan).
       allow create: if isStaff()
@@ -42,10 +53,10 @@ service cloud.firestore {
         && request.resource.data.scannedBy.size() <= 30
         && request.resource.data.scannedAt == request.time;
 
-      // Foute scan ongedaan maken: enkel binnen 2 minuten (zelfde waarde als undoWindowSec).
-      allow delete: if isStaff()
-        && currentYearCollection(coll)
-        && request.time < resource.data.scannedAt + duration.value(120, 's');
+      // Foute scan ongedaan maken: scanners binnen 2 minuten (= undoWindowSec), beheerders altijd.
+      allow delete: if currentYearCollection(coll) && (
+        isAdmin()
+        || (isScanner() && request.time < resource.data.scannedAt + duration.value(120, 's')));
 
       allow update: if false;
     }

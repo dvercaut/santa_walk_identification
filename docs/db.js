@@ -40,11 +40,22 @@ export class FirestoreStore {
     this.history = new Map();   // key -> { edition, at }
     this.past = new Map();      // collectie -> [{id, key, edition, at}]
     this.historyLoaded = false;
-    this.dry = new Map();       // oefenmodus: scans enkel in geheugen
+    // Oefenmodus: scans enkel op dit toestel (localStorage), nooit in Firestore.
+    this.dry = new Map(dryRun ? JSON.parse(localStorage.getItem(`sw.dry.${cfg.year}`) || '[]').map(([k, v]) => [k, { ...v, at: new Date(v.at) }]) : []);
+    this.onSyncError = null;    // callback als een offline scan later door de server geweigerd wordt
   }
 
   onUser(cb) { return onAuthStateChanged(this.auth, cb); }
-  login(code) { return signInWithEmailAndPassword(this.auth, this.cfg.sharedAccountEmail, code); }
+  /** Eén codeveld: eerst als scanner, anders als beheerder. */
+  async login(code) {
+    try {
+      return await signInWithEmailAndPassword(this.auth, this.cfg.sharedAccountEmail, code);
+    } catch (e) {
+      if (!['auth/invalid-credential', 'auth/wrong-password', 'auth/invalid-login-credentials'].includes(e.code)) throw e;
+      return await signInWithEmailAndPassword(this.auth, this.cfg.adminAccountEmail, code);
+    }
+  }
+  roleOf(user) { return user?.email === this.cfg.adminAccountEmail ? 'admin' : 'scanner'; }
   logout() { return signOut(this.auth); }
 
   /**
@@ -128,6 +139,7 @@ export class FirestoreStore {
       const d = this.dry.get(parsed.key);
       if (d) return { status: 'duplicate', first: d };
       this.dry.set(parsed.key, { at: new Date(), by: scannerName || '?' });
+      this._saveDry();
       return { status: 'ok' };
     }
 
@@ -155,12 +167,14 @@ export class FirestoreStore {
       const cached = await getDocFromCache(ref);
       if (cached.exists()) return { status: 'duplicate', first: describe(cached.data()) };
     } catch (_) { /* niet in cache */ }
-    setDoc(ref, data).catch(err => console.warn('Sync geweigerd (waarschijnlijk elders al gescand):', parsed.key, err));
+    setDoc(ref, data).catch(err => { console.warn('Sync geweigerd:', parsed.key, err); this.onSyncError?.(parsed, err); });
     return { status: 'queued' };
   }
 
+  _saveDry() { localStorage.setItem(`sw.dry.${this.cfg.year}`, JSON.stringify([...this.dry])); }
+
   async undo(key) {
-    if (this.dryRun) { this.dry.delete(key); return; }
+    if (this.dryRun) { this.dry.delete(key); this._saveDry(); return; }
     await deleteDoc(doc(this.col, key));
   }
 
@@ -202,7 +216,8 @@ export class MemoryStore {
     }
   }
   async loadAllPast() { return this.past; }
-  onUser(cb) { cb({ email: 'lokaal' }); return () => {}; }
+  onUser(cb) { cb({ email: new URLSearchParams(location.search).get('role') === 'scanner' ? 'scanner' : this.cfg.adminAccountEmail }); return () => {}; }
+  roleOf(user) { return user?.email === this.cfg.adminAccountEmail ? 'admin' : 'scanner'; }
   async login() {}
   async logout() {}
   async loadHistory() { return { loaded: true, size: this.history.size, failed: [] }; }

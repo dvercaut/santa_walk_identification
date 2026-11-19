@@ -42,7 +42,8 @@ export const CONFIG = {
   // Eén gedeelde toegangscode (= wachtwoord van één Firebase-gebruiker).
   // Zet requireLogin op false enkel samen met de 'open' variant van de rules.
   requireLogin: true,
-  sharedAccountEmail: 'scanner@santawalk.app',
+  sharedAccountEmail: 'scanner@santawalk.app',   // scanners: Scannen, Opzoeken, Meer
+  adminAccountEmail: 'admin@santawalk.app',       // beheerders: + Teller, statistieken, export, scans wissen
 
   // Foute scan ongedaan maken: binnen deze tijd (seconden). Moet gelijk zijn aan firestore.rules.
   undoWindowSec: 120,

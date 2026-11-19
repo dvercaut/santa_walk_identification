@@ -46,6 +46,7 @@ $('newRange').textContent = `(${NEW.from}–${NEW.to})`;
 let giftStock = CONFIG.giftStock;
 let lastStats = { total: 0, docs: [] };
 let pastLoaded = false;
+let role = 'scanner';
 
 // ---------- Toegangscode ----------
 async function tryLogin(code) {
@@ -76,11 +77,12 @@ if (hashCode) history.replaceState(null, '', location.pathname + location.search
 async function ensurePast() {
   if (pastLoaded) return;
   try { await store.loadAllPast(); pastLoaded = true; } catch (_) { return; }
-  refreshCompareOptions();
+  renderYearPicks();
   renderHourly();
   if ($('pastStats').open) renderPast();
 }
 function showTab(name) {
+  if (name === 'count' && role !== 'admin') name = 'scan';
   if (name === 'count') ensurePast();
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   ['scan', 'lookup', 'count', 'settings'].forEach(t => { $(`tab-${t}`).hidden = t !== name; });
@@ -193,7 +195,7 @@ setInterval(renderRecent, 15000);
 
 async function undo(key, ask) {
   if (!key) return false;
-  if (ask && !confirm('Deze scan ongedaan maken? Het bandje staat dan terug als niet-uitgeleverd.')) return false;
+  if (ask && !confirm('Deze scan ongedaan maken? Het bandje staat dan terug als niet ingescand.')) return false;
   try {
     await store.undo(key);
     const r = recent.find(x => x.key === key && x.kind === 'ok');
@@ -213,9 +215,9 @@ let busy = false;
 function describeUsed(res) {
   if (res.status === 'history') {
     const d = res.first?.at;
-    return `al uitgeleverd op de Santa Walk ${res.first?.edition}${d ? ` (${fmtDate(d)})` : ''}`;
+    return `al ingescand op de Santa Walk ${res.first?.edition}${d ? ` (${fmtDate(d)})` : ''}`;
   }
-  return `al uitgeleverd ${isToday(res.first?.at) ? 'om' : 'op'} ${fmtWhen(res.first?.at)}${res.first?.by ? ` – ${res.first.by}` : ''}`;
+  return `al ingescand ${isToday(res.first?.at) ? 'om' : 'op'} ${fmtWhen(res.first?.at)}${res.first?.by ? ` – ${res.first.by}` : ''}`;
 }
 
 async function handleCode(raw, { manual = false } = {}) {
@@ -262,11 +264,18 @@ $('manualForm').addEventListener('submit', e => {
   $('manualInput').blur();
 });
 
+// Offline gescande code die later door de server geweigerd wordt (bv. intussen elders gescand).
+store.onSyncError = (parsed, err) => {
+  const r = recent.find(x => x.key === parsed.key && x.kind === 'ok');
+  if (r) { r.kind = 'bad'; r.label += ' – NIET opgeslagen (server weigerde)'; saveRecent(); }
+  alert(`Let op: ${parsed.label} werd offline als geldig getoond, maar de server weigerde de scan (${err.code || err.message}). Waarschijnlijk was het bandje al elders ingescand.`);
+};
+
 // ---------- Opzoeken (breed) ----------
 function scansThisYear() {
   const m = new Map();
   for (const d of lastStats.docs) m.set(d.code, { at: db.toDate(d.scannedAt), by: d.scannedBy });
-  if (store.dry) for (const [k, v] of store.dry) m.set(k, v);
+  if (store.dry) for (const [k, v] of store.dry) m.set(k, { ...v, demo: true });
   return m;
 }
 
@@ -283,7 +292,7 @@ $('lookupForm').addEventListener('submit', async e => {
   try { await store.loadAllPast(); } catch (_) {}
   const now = scansThisYear();
   const hits = [];
-  for (const k of keys) if (now.has(k)) hits.push({ edition: CONFIG.year, coll: CONFIG.collection, id: k, at: now.get(k).at, by: now.get(k).by });
+  for (const k of keys) if (now.has(k)) { const v = now.get(k); hits.push({ edition: CONFIG.year, coll: v.demo ? 'oefenmodus (enkel dit toestel)' : CONFIG.collection, id: k, at: v.at, by: v.by, current: !v.demo }); }
   for (const [coll, rows] of store.past) {
     for (const r of rows) if (keys.includes(r.key) || keys.includes(r.id)) hits.push({ edition: r.edition, coll, id: r.id, at: r.at });
   }
@@ -293,7 +302,7 @@ $('lookupForm').addEventListener('submit', async e => {
   if (parsed.ok) {
     const used = hits.find(h => keyMatches(h, parsed.key));
     head.classList.add(used ? 'dup' : 'ok');
-    head.append(el('div', 'lk-title', used ? `⚠ ${parsed.label}: al uitgeleverd` : `✔ ${parsed.label}: geldig, nog niet uitgeleverd`));
+    head.append(el('div', 'lk-title', used ? `⚠ ${parsed.label}: al ingescand` : `✔ ${parsed.label}: geldig, nog niet ingescand`));
     head.append(el('div', 'muted small', used
       ? `Santa Walk ${used.edition}${used.at ? ` – ${fmtWhen(used.at)}` : ''}${used.by ? ` – ${used.by}` : ''} → geen pakje`
       : 'Mag een pakje krijgen.'));
@@ -308,6 +317,14 @@ $('lookupForm').addEventListener('submit', async e => {
   for (const h of hits) {
     const li = el('li');
     li.append(el('strong', null, `${h.edition}`), el('span', null, ` ${h.id}`), el('span', 'muted small', ` · ${h.coll}${h.at ? ` · ${fmtWhen(h.at)}` : ''}${h.by ? ` · ${h.by}` : ''}`));
+    if (role === 'admin' && h.current) {
+      const del = el('button', 'mini danger', 'Scan wissen');
+      del.addEventListener('click', async () => {
+        if (!confirm(`Scan van ${h.id} (${fmtWhen(h.at)}, ${h.by || '?'}) wissen? Het bandje kan daarna opnieuw gescand worden.`)) return;
+        try { await store.undo(h.id); li.remove(); } catch (err) { alert(`Wissen mislukt: ${err.code || err.message}`); }
+      });
+      li.append(' ', del);
+    }
     ul.append(li);
   }
   if (hits.length) list.append(ul);
@@ -444,7 +461,7 @@ function renderStats({ total, pending, fromCache, docs }) {
   const left = giftStock - total;
   $('stockLeft').textContent = left;
   $('stockLeft').classList.toggle('low', left <= CONFIG.giftStockWarnAt);
-  $('stockInfo').textContent = `Startvoorraad ${giftStock} – één pakje per geldig bandje, nieuw én oud`;
+  $('stockInfo').textContent = `Startvoorraad ${giftStock} – één pakje per ingescand bandje, nieuw én oud`;
 
   const per = new Map();
   for (const d of docs) { const by = d.scannedBy || '?'; per.set(by, (per.get(by) || 0) + 1); }
@@ -461,9 +478,14 @@ function showStatsError(err) {
   $('syncInfo').textContent = err.code === 'permission-denied' ? 'Geen leesrechten op de teller' : `Fout: ${err.message}`;
 }
 
-// ---------- Aankomsten per uur (dit jaar vs vorige editie) ----------
+// ---------- Aankomsten per uur: alle edities in één grafiek, aan/uit te vinken ----------
 // Elke editie valt (bijna) op één dag; testscans op andere dagen tellen niet mee:
-// we nemen per editie de dag met de meeste scans ("hoofddag").
+// per editie nemen we de dag met de meeste scans ("hoofddag").
+const YEAR_COLORS = { 2026: '#b3261e', 2025: '#1e4a37', 2024: '#c9a227', 2023: '#4f6d8a', 2022: '#8a5a44', 2019: '#7b5ea7', 2018: '#7d8580' };
+const yearColor = y => YEAR_COLORS[y] || '#999';
+const picked = new Set(JSON.parse(localStorage.getItem('sw.chartYears') || 'null') || [CONFIG.year, CONFIG.year - 1, CONFIG.year - 2]);
+let chartMode = 'count';
+
 function mainDay(dates) {
   const byDay = new Map();
   for (const d of dates) { const k = d.toDateString(); byDay.set(k, (byDay.get(k) || 0) + 1); }
@@ -472,68 +494,88 @@ function mainDay(dates) {
   return best ? { day: best, dates: dates.filter(d => d.toDateString() === best), other: dates.length - n } : { day: null, dates: [], other: 0 };
 }
 function perHour(dates) { const h = new Array(24).fill(0); for (const d of dates) h[d.getHours()]++; return h; }
-function pastDates(year) {
+function datesOf(year) {
+  if (year === CONFIG.year) return lastStats.docs.map(d => db.toDate(d.scannedAt)).filter(Boolean);
   const out = [];
   for (const rows of store.past.values()) for (const r of rows) if (r.edition === year && r.at) out.push(r.at);
   return out;
 }
-function refreshCompareOptions() {
-  const sel = $('compareYear');
-  const years = new Set();
+function availableYears() {
+  const years = new Set([CONFIG.year]);
   for (const rows of store.past.values()) for (const r of rows) if (r.at && r.edition) years.add(r.edition);
-  const list = [...years].sort((a, b) => b - a);
-  const cur = sel.value;
-  sel.replaceChildren(...list.map(y => { const o = el('option', null, y); o.value = y; return o; }));
-  if (list.length) sel.value = list.includes(+cur) ? cur : list[0];
+  return [...years].sort((a, b) => b - a);
 }
-$('compareYear').addEventListener('change', renderHourly);
+function renderYearPicks() {
+  const box = $('yearPicks');
+  box.replaceChildren(...availableYears().map(y => {
+    const lab = el('label', 'pick');
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = picked.has(y);
+    cb.addEventListener('change', () => {
+      cb.checked ? picked.add(y) : picked.delete(y);
+      localStorage.setItem('sw.chartYears', JSON.stringify([...picked]));
+      renderHourly();
+    });
+    const sw = el('span', 'swatch'); sw.style.background = yearColor(y);
+    lab.append(cb, sw, el('span', null, y));
+    return lab;
+  }));
+}
+function setMode(m) {
+  chartMode = m;
+  $('modeCount').classList.toggle('active', m === 'count');
+  $('modePct').classList.toggle('active', m === 'pct');
+  renderHourly();
+}
+$('modeCount').addEventListener('click', () => setMode('count'));
+$('modePct').addEventListener('click', () => setMode('pct'));
 
 function renderHourly() {
-  const nowDates = lastStats.docs.map(d => db.toDate(d.scannedAt)).filter(Boolean);
-  const cur = mainDay(nowDates);
-  const cmpYear = parseInt($('compareYear').value, 10);
-  const cmp = Number.isFinite(cmpYear) ? mainDay(pastDates(cmpYear)) : { dates: [], day: null };
-  const a = perHour(cur.dates), b = perHour(cmp.dates);
-  const used = [...Array(24).keys()].filter(h => a[h] || b[h]);
+  const years = availableYears().filter(y => picked.has(y));
+  const series = years.map(y => {
+    const md = mainDay(datesOf(y));
+    const counts = perHour(md.dates);
+    const total = md.dates.length || 1;
+    return { y, md, counts, vals: counts.map(c => chartMode === 'pct' ? (c / total) * 100 : c) };
+  }).filter(s => s.md.day);
+  const used = [...Array(24).keys()].filter(h => series.some(s => s.counts[h]));
   const from = used.length ? Math.min(...used) : 14, to = used.length ? Math.max(...used) : 20;
   const hours = []; for (let h = from; h <= to; h++) hours.push(h);
-  const max = Math.max(1, ...hours.map(h => Math.max(a[h], b[h])));
+  const max = Math.max(chartMode === 'pct' ? 10 : 5, ...series.flatMap(s => hours.map(h => s.vals[h])));
 
-  // SVG: gegroepeerde staven per uur
-  const W = 640, H = 260, padL = 46, padB = 34, padT = 12;
-  const bw = (W - padL - 8) / hours.length;
+  const W = 640, H = 260, padL = 66, padR = 24, padB = 34, padT = 14;
+  const step = hours.length > 1 ? (W - padL - padR) / (hours.length - 1) : 0;
+  const x = i => hours.length > 1 ? padL + i * step : (W + padL) / 2;
   const y = v => H - padB - (v / max) * (H - padB - padT);
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  const add = (tag, attrs, text) => { const n = document.createElementNS(ns, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; svg.append(n); return n; };
+  const add = (parent, tag, attrs, text) => { const n = document.createElementNS(ns, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; parent.append(n); return n; };
   for (const t of [0, 0.5, 1]) {
-    const v = Math.round(max * t), yy = y(v);
-    add('line', { x1: padL, x2: W - 4, y1: yy, y2: yy, class: 'grid' });
-    add('text', { x: padL - 8, y: yy + 7, class: 'axis', 'text-anchor': 'end' }, v);
+    const v = max * t, yy = y(v);
+    add(svg, 'line', { x1: padL, x2: W - padR, y1: yy, y2: yy, class: 'grid' });
+    add(svg, 'text', { x: padL - 8, y: yy + 7, class: 'axis', 'text-anchor': 'end' }, chartMode === 'pct' ? `${Math.round(v)}%` : Math.round(v));
   }
-  hours.forEach((h, i) => {
-    const x = padL + i * bw;
-    const w = Math.max(3, bw * 0.36);
-    if (cmp.day) add('rect', { x: x + bw * 0.12, y: y(b[h]), width: w, height: H - padB - y(b[h]), rx: 2, class: 'bar-prev' }).append(Object.assign(document.createElementNS(ns, 'title'), { textContent: `${cmpYear} ${h}u: ${b[h]}` }));
-    add('rect', { x: x + bw * 0.12 + w + 2, y: y(a[h]), width: w, height: H - padB - y(a[h]), rx: 2, class: 'bar-now' }).append(Object.assign(document.createElementNS(ns, 'title'), { textContent: `${CONFIG.year} ${h}u: ${a[h]}` }));
-    add('text', { x: x + bw / 2, y: H - 6, class: 'axis', 'text-anchor': 'middle' }, `${h}u`);
-  });
-  const legend = el('div', 'legend');
-  legend.append(el('span', 'lg now', `${CONFIG.year}${cur.day ? ` (${fmtDate(new Date(cur.day))})` : ''}`));
-  if (cmp.day) legend.append(el('span', 'lg prev', `${cmpYear} (${fmtDate(new Date(cmp.day))})`));
-  $('hourChart').replaceChildren(svg, legend);
+  hours.forEach((h, i) => add(svg, 'text', { x: x(i), y: H - 6, class: 'axis', 'text-anchor': 'middle' }, `${h}u`));
+  for (const s of series) {
+    const pts = hours.map((h, i) => `${x(i).toFixed(1)},${y(s.vals[h]).toFixed(1)}`).join(' ');
+    add(svg, 'polyline', { points: pts, fill: 'none', stroke: yearColor(s.y), 'stroke-width': s.y === CONFIG.year ? 4 : 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+    hours.forEach((h, i) => {
+      const c = add(svg, 'circle', { cx: x(i), cy: y(s.vals[h]), r: 4, fill: yearColor(s.y) });
+      add(c, 'title', {}, `${s.y} ${h}u: ${s.counts[h]} scans (${Math.round(s.counts[h] / (s.md.dates.length || 1) * 100)}%)`);
+    });
+  }
+  $('hourChart').replaceChildren(svg);
 
-  const peak = (arr) => { let h = -1, v = 0; arr.forEach((c, i) => { if (c > v) { v = c; h = i; } }); return h < 0 ? null : { h, v }; };
-  const pa = peak(a), pb = peak(b);
   const info = [];
-  if (pb) info.push(`Drukste uur ${cmpYear}: ${pb.h}u–${pb.h + 1}u (${pb.v} scans, ${Math.round(pb.v / Math.max(1, cmp.dates.length) * 100)}% van die dag).`);
-  if (pa) info.push(`Dit jaar tot nu: ${pa.h}u–${pa.h + 1}u (${pa.v}).`);
-  if (cmp.other) info.push(`${cmp.other} scans van ${cmpYear} op andere dagen niet meegeteld.`);
-  if (!pb && !Number.isFinite(cmpYear)) info.push(pastLoaded ? 'Geen tijdstippen beschikbaar voor vorige edities.' : 'Vorige edities laden…');
-  $('hourInfo').textContent = info.join(' ');
-  $('hourCmpHead').textContent = Number.isFinite(cmpYear) ? cmpYear : '';
-  fillTable('hourTable', hours.map(h => [`${String(h).padStart(2, '0')}:00`, a[h], cmp.day ? b[h] : '']).map(([h, x, z]) => [h, x, z]));
+  for (const s of series) {
+    let ph = -1, pv = 0; s.counts.forEach((c, h) => { if (c > pv) { pv = c; ph = h; } });
+    info.push(`${s.y}${s.y === CONFIG.year ? ' (tot nu)' : ''}: drukste uur ${ph}u–${ph + 1}u (${pv} van ${s.md.dates.length}, ${fmtDate(new Date(s.md.day))})${s.md.other ? `, ${s.md.other} scans op andere dagen niet meegeteld` : ''}`);
+  }
+  if (!series.length) info.push(pastLoaded ? 'Vink minstens één editie met tijdstippen aan.' : 'Vorige edities laden…');
+  $('hourInfo').replaceChildren(...info.map(t => el('div', null, t)));
+
+  $('hourHead').replaceChildren(el('th', null, 'Uur'), ...series.map(s => el('th', 'num', s.y)));
+  fillTable('hourTable', hours.map(h => [`${String(h).padStart(2, '0')}:00`, ...series.map(s => chartMode === 'pct' ? `${s.vals[h].toFixed(0)}%` : s.counts[h])]));
 }
 
 // ---------- Vorige edities ----------
@@ -631,10 +673,21 @@ async function afterLogin() {
   const h = await store.loadHistory();
   $('infoHistory').textContent = `${h.size} bandjes van ${CONFIG.historyCollections.map(c => c.slice(11)).join(', ')}${h.loaded ? '' : ' (onvolledig)'}`;
   $('historyBanner').hidden = h.loaded;
-  if (!h.loaded) $('historyBanner').textContent = '⚠ Historiek vorige jaren niet (volledig) geladen – oude bandjes worden mogelijk niet herkend als uitgeleverd. Herlaad met netwerk.';
+  if (!h.loaded) $('historyBanner').textContent = '⚠ Historiek vorige jaren niet (volledig) geladen – oude bandjes worden mogelijk niet herkend als al ingescand. Herlaad met netwerk.';
+}
+
+function applyRole() {
+  document.body.classList.toggle('is-admin', role === 'admin');
+  document.querySelectorAll('.admin-only').forEach(e => { e.hidden = role !== 'admin'; });
+  if (role !== 'admin' && !$('tab-count').hidden) showTab('scan');
+  $('roleInfo').textContent = role === 'admin'
+    ? 'Aangemeld als beheerder: teller, statistieken, export en scans wissen beschikbaar.'
+    : 'Aangemeld als scanner. Statistieken zijn enkel zichtbaar voor beheerders.';
 }
 
 store.onUser(user => {
+  role = user ? store.roleOf(user) : 'scanner';
+  applyRole();
   const needLogin = CONFIG.requireLogin && DEMO !== 'local' && !user;
   $('loginView').hidden = !needLogin;
   $('mainView').hidden = needLogin;
