@@ -11,9 +11,12 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Aangemeld met het gedeelde scanner-account (één toegangscode).
+    // Expliciet op e-mail: "Anonymous" sign-in staat aan in dit project, en een
+    // anonieme gebruiker mag NIET als medewerker gelden.
     // Noodoplossing zonder login: vervang door `return true;` en zet requireLogin: false in config.js.
     function isStaff() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.token.email == 'scanner@santawalk.app';
     }
 
     function currentYearCollection(coll) {
