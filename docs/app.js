@@ -681,7 +681,7 @@ function applyRole() {
   document.querySelectorAll('.admin-only').forEach(e => { e.hidden = role !== 'admin'; });
   if (role !== 'admin' && !$('tab-count').hidden) showTab('scan');
   $('roleInfo').textContent = role === 'admin'
-    ? 'Aangemeld als beheerder: teller, statistieken, export en scans wissen beschikbaar.'
+    ? 'Aangemeld als beheerder: stats, export en scans wissen beschikbaar.'
     : 'Aangemeld als scanner. Statistieken zijn enkel zichtbaar voor beheerders.';
 }
 
