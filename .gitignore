@@ -6,3 +6,8 @@ dist/
 .firebaserc
 yarn.lock
 santa-walk-identification-firebase-adminsdk-9iiz7-4e456d77cf.json
+# Gegenereerde QR-bandjes (niet committen)
+generate_qr/images/
+# Firebase service account keys
+*adminsdk*.json
+firebase-debug.log

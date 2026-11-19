@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// Santa Walk – Firestore security rules
+// Deploy:  firebase deploy --only firestore:rules
+//
+// Principe: scanners mogen een bandje enkel AANMAKEN (eerste scan), nooit
+// wijzigen of verwijderen. Een tweede scan van hetzelfde bandje faalt dus ook
+// server-side, zelfs als iemand de app omzeilt.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Wie mag scannen/lezen?
+    //  - Strikt (aanbevolen, docs/config.js requireLogin: true):
+    //      ingelogde medewerker via Firebase Authentication (e-mail/wachtwoord)
+    //  - Open (enkel als noodoplossing, requireLogin: false):
+    //      vervang de body door `return true;`
+    function isStaff() {
+      return request.auth != null;
+    }
+
+    match /{coll}/{code} {
+      allow read: if isStaff() && coll.matches('santa_walk_[0-9]{4}');
+
+      allow create: if isStaff()
+        && coll.matches('santa_walk_[0-9]{4}')
+        && code.matches('santa_walk_[0-9]{4}_[0-9]{1,5}')
+        && request.resource.data.keys().hasOnly(['ID', 'code', 'scannedAt', 'scannedBy', 'uid'])
+        && request.resource.data.code == code
+        && request.resource.data.ID is string
+        && request.resource.data.scannedBy is string
+        && request.resource.data.scannedBy.size() <= 30
+        && request.resource.data.scannedAt == request.time;
+
+      allow update, delete: if false;
+    }
+  }
+}
