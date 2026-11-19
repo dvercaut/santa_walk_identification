@@ -2,14 +2,15 @@
 
 Gebruik:
     pip install qrcode pillow
-    python generate_qr.py --year 2026 --start 1 --end 1500
+    python generate_qr.py --year 2026 --start 2251 --end 2750            # QR = "2251" (zoals sinds 2025 gedrukt)
+    python generate_qr.py --year 2026 --start 2251 --end 2750 --prefixed # QR = "santa_walk_2026_2251"
 
 Resultaat in images/santa_walk_<jaar>/:
     santa_walk_<jaar>_<nr>.png   QR + nummer eronder (voor drukker / labelprinter)
     codes_<jaar>.csv             lijst van alle codes (nr;inhoud)
 
-De QR-inhoud is "santa_walk_<jaar>_<nr>" en moet overeenkomen met docs/config.js
-(year, idMin, idMax).
+De app aanvaardt beide vormen; de nummers moeten binnen plainMin-plainMax in
+docs/config.js vallen. Nummering loopt door over de jaren (2025: 1501-2250, 2026: 2251-2750).
 """
 import argparse
 import csv
@@ -54,8 +55,9 @@ def make_label(content, number, box_size, font):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--year", type=int, required=True)
-    p.add_argument("--start", type=int, default=1)
-    p.add_argument("--end", type=int, default=1500)
+    p.add_argument("--start", type=int, required=True)
+    p.add_argument("--end", type=int, required=True)
+    p.add_argument("--prefixed", action="store_true", help='QR-inhoud "santa_walk_<jaar>_<nr>" i.p.v. enkel het nummer')
     p.add_argument("--box-size", type=int, default=10, help="pixels per QR-module (10 = ~330 px breed)")
     p.add_argument("--font-size", type=int, default=55)
     p.add_argument("--out", default=None)
@@ -69,8 +71,8 @@ def main():
         w = csv.writer(f, delimiter=";")
         w.writerow(["nr", "inhoud"])
         for nr in range(a.start, a.end + 1):
-            content = f"santa_walk_{a.year}_{nr}"
-            make_label(content, nr, a.box_size, font).save(os.path.join(out_dir, f"{content}.png"))
+            content = f"santa_walk_{a.year}_{nr}" if a.prefixed else str(nr)
+            make_label(content, nr, a.box_size, font).save(os.path.join(out_dir, f"santa_walk_{a.year}_{nr}.png"))
             w.writerow([nr, content])
             if nr % 100 == 0:
                 print(f"{nr}/{a.end}")

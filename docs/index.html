@@ -6,6 +6,8 @@
   <meta name="theme-color" content="#b71c1c">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Santa Walk">
+  <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://*.firebaseapp.com">
   <title>Santa Walk – Scanner</title>
   <link rel="icon" type="image/png" href="santa_claus.png">
@@ -16,19 +18,22 @@
   <header class="topbar">
     <div class="brand"><img src="santa_claus.png" alt=""><span id="title">Santa Walk</span></div>
     <div class="status">
-      <span id="countBadge" class="badge" title="Totaal gescand">–</span>
+      <span id="stockBadge" class="badge" title="Pakjes over" hidden></span>
+      <span id="countBadge" class="badge" title="Uitgeleverd dit jaar">–</span>
       <span id="netDot" class="dot" title="Verbinding"></span>
     </div>
   </header>
   <div id="demoBanner" class="demo" hidden>OEFENMODUS – scans worden niet opgeslagen</div>
+  <div id="historyBanner" class="warn" hidden></div>
 
-  <!-- Login -->
+  <!-- Toegangscode -->
   <section id="loginView" class="view" hidden>
     <form id="loginForm" class="card">
-      <h2>Aanmelden</h2>
-      <label>E-mail <input id="loginEmail" type="email" autocomplete="username" required></label>
-      <label>Wachtwoord <input id="loginPw" type="password" autocomplete="current-password" required></label>
-      <button type="submit" class="primary">Aanmelden</button>
+      <h2>Toegangscode</h2>
+      <p class="muted">Vraag de code aan de organisatie. Je hoeft dit maar één keer per toestel te doen.</p>
+      <input type="text" name="username" autocomplete="username" value="scanner" hidden>
+      <input id="loginCode" type="password" autocomplete="current-password" aria-label="Toegangscode" required>
+      <button type="submit" class="primary">Start</button>
       <p id="loginError" class="error" role="alert"></p>
     </form>
   </section>
@@ -36,8 +41,9 @@
   <main id="mainView" hidden>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-tab="scan" role="tab">Scannen</button>
+      <button class="tab" data-tab="lookup" role="tab">Opzoeken</button>
       <button class="tab" data-tab="count" role="tab">Teller</button>
-      <button class="tab" data-tab="settings" role="tab">Instellingen</button>
+      <button class="tab" data-tab="settings" role="tab">Meer</button>
     </nav>
 
     <!-- Scannen -->
@@ -48,6 +54,7 @@
         <div id="result" class="result" hidden>
           <div id="resultTitle" class="result-title"></div>
           <div id="resultDetail" class="result-detail"></div>
+          <button id="resultUndo" class="undo" hidden>↶ Ongedaan maken</button>
         </div>
         <button id="startBtn" class="start primary">📷 Start camera</button>
         <p id="camError" class="cam-error" role="alert" hidden></p>
@@ -61,20 +68,46 @@
       </div>
 
       <form id="manualForm" class="manual">
-        <input id="manualInput" inputmode="numeric" placeholder="Nummer manueel ingeven" aria-label="Bandjesnummer">
+        <input id="manualInput" inputmode="numeric" autocomplete="off" placeholder="Nummer manueel ingeven" aria-label="Bandjesnummer">
         <button type="submit">OK</button>
       </form>
 
       <h3 class="recent-title">Laatste scans op dit toestel</h3>
-      <ul id="recent" class="recent"><li class="empty">Nog geen scans</li></ul>
+      <ul id="recent" class="recent"></ul>
+    </section>
+
+    <!-- Opzoeken -->
+    <section id="tab-lookup" class="view" hidden>
+      <form id="lookupForm" class="card">
+        <h3>Status van een bandje</h3>
+        <p class="muted small">Zonder iets te registreren. Handig bij "ik heb nog geen pakje gehad".</p>
+        <div class="manual">
+          <input id="lookupInput" inputmode="numeric" autocomplete="off" placeholder="bv. 2251 of santa_walk_2024_100" aria-label="Bandje opzoeken">
+          <button type="submit">Zoek</button>
+        </div>
+      </form>
+      <div id="lookupResult" class="card lookup" hidden></div>
     </section>
 
     <!-- Teller -->
     <section id="tab-count" class="view" hidden>
-      <div class="card center">
-        <div class="label">Deelnemers <span id="yearLabel"></span></div>
-        <div id="totalCount" class="big">–</div>
-        <div id="syncInfo" class="muted"></div>
+      <div id="bigBoard" class="board">
+        <button id="boardClose" class="board-close" hidden>✕</button>
+        <div class="card center">
+          <div class="label">Pakjes uitgeleverd <span class="yearLabel"></span></div>
+          <div id="totalCount" class="big">–</div>
+          <div id="syncInfo" class="muted"></div>
+        </div>
+        <div class="card center">
+          <div class="label">Pakjes nog in voorraad</div>
+          <div id="stockLeft" class="big">–</div>
+          <div id="stockInfo" class="muted"></div>
+        </div>
+      </div>
+      <button id="boardBtn">📺 Groot scherm</button>
+      <div class="card">
+        <h3>Soort bandje</h3>
+        <table id="perType"><tbody></tbody></table>
       </div>
       <div class="card">
         <h3>Per scanner</h3>
@@ -87,22 +120,28 @@
       <button id="exportBtn">⬇️ Exporteer CSV</button>
     </section>
 
-    <!-- Instellingen -->
+    <!-- Meer -->
     <section id="tab-settings" class="view" hidden>
       <div class="card">
-        <label>Naam van deze scanner (bv. "Ingang 1")
+        <label>Naam van deze scanner (bv. "Kraam 1")
           <input id="scannerName" maxlength="30">
         </label>
         <label class="row"><input id="soundToggle" type="checkbox"> Geluid bij scan</label>
         <label class="row"><input id="vibrateToggle" type="checkbox"> Trillen bij scan</label>
       </div>
+      <div class="card">
+        <h3>Toestel-check</h3>
+        <p class="muted small">Test of dit toestel geschikt is (camera, scanner, lamp). Start eerst de camera.</p>
+        <button id="checkBtn">Controleer toestel</button>
+        <table id="checkTable" class="check"><tbody></tbody></table>
+      </div>
       <div class="card muted small">
         <div>Collectie: <code id="infoCollection"></code></div>
-        <div>Verwachte code: <code id="infoPrefix"></code></div>
-        <div>Scan-engine: <span id="infoEngine">nog niet gestart</span></div>
-        <div>Aangemeld als: <span id="infoUser">–</span></div>
+        <div>Geldige bandjes: <span id="infoCodes"></span></div>
+        <div>Historiek: <span id="infoHistory">laden…</span></div>
       </div>
-      <button id="logoutBtn">Afmelden</button>
+      <a id="demoLink" class="button-link" href="?demo=1">🎓 Oefenmodus openen</a>
+      <button id="logoutBtn">Afmelden op dit toestel</button>
     </section>
   </main>
 

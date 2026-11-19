@@ -1,38 +1,56 @@
 rules_version = '2';
 
 // Santa Walk – Firestore security rules
-// Deploy:  firebase deploy --only firestore:rules
+// Deploy:  firebase deploy --only firestore:rules   (of plakken in Console › Firestore › Rules)
 //
-// Principe: scanners mogen een bandje enkel AANMAKEN (eerste scan), nooit
-// wijzigen of verwijderen. Een tweede scan van hetzelfde bandje faalt dus ook
-// server-side, zelfs als iemand de app omzeilt.
+// Deze regels gelden ENKEL voor de webapp (client SDK / REST met API-key).
+// De Firebase Console en de Admin SDK (Python-scripts met service account)
+// negeren rules volledig: daar kan je nog altijd alles aanpassen en verwijderen.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Wie mag scannen/lezen?
-    //  - Strikt (aanbevolen, docs/config.js requireLogin: true):
-    //      ingelogde medewerker via Firebase Authentication (e-mail/wachtwoord)
-    //  - Open (enkel als noodoplossing, requireLogin: false):
-    //      vervang de body door `return true;`
+    // Aangemeld met het gedeelde scanner-account (één toegangscode).
+    // Noodoplossing zonder login: vervang door `return true;` en zet requireLogin: false in config.js.
     function isStaff() {
       return request.auth != null;
     }
 
-    match /{coll}/{code} {
+    function currentYearCollection(coll) {
+      return coll == 'santa_walk_' + string(request.time.year());
+    }
+
+    function validKey(key) {
+      return key.matches('[0-9]{1,5}') || key.matches('santa_walk_[0-9]{4}_[0-9]{1,5}');
+    }
+
+    // Scans per editie: santa_walk_2023, santa_walk_2024, …
+    match /{coll}/{key} {
       allow read: if isStaff() && coll.matches('santa_walk_[0-9]{4}');
 
+      // Enkel in de collectie van het lopende jaar, enkel nieuw (eerste scan).
       allow create: if isStaff()
-        && coll.matches('santa_walk_[0-9]{4}')
-        && code.matches('santa_walk_[0-9]{4}_[0-9]{1,5}')
-        && request.resource.data.keys().hasOnly(['ID', 'code', 'scannedAt', 'scannedBy', 'uid'])
-        && request.resource.data.code == code
+        && currentYearCollection(coll)
+        && validKey(key)
+        && request.resource.data.keys().hasOnly(['ID', 'code', 'scannedAt', 'scannedBy'])
+        && request.resource.data.code == key
         && request.resource.data.ID is string
         && request.resource.data.scannedBy is string
         && request.resource.data.scannedBy.size() <= 30
         && request.resource.data.scannedAt == request.time;
 
-      allow update, delete: if false;
+      // Foute scan ongedaan maken: enkel binnen 2 minuten (zelfde waarde als undoWindowSec).
+      allow delete: if isStaff()
+        && currentYearCollection(coll)
+        && request.time < resource.data.scannedAt + duration.value(120, 's');
+
+      allow update: if false;
+    }
+
+    // Instellingen per jaar (bv. giftStock). Enkel lezen; aanpassen via de Console.
+    match /santa_walk_settings/{year} {
+      allow read: if isStaff();
+      allow write: if false;
     }
   }
 }

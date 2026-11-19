@@ -1,32 +1,52 @@
-# Santa Walk – ticketscanner
+# Santa Walk – scanner voor polsbandjes
 
-Webapp om de QR-codes op de polsbandjes van de Santa Walk te scannen: controleert of het bandje geldig is, weigert dubbele scans en telt live het aantal deelnemers. Data in Firebase Firestore.
+Webapp om de QR-code op de polsbandjes te scannen bij het uitreiken van de pakjes. De app controleert of het bandje geldig is, weigert bandjes die al uitgeleverd zijn (ook in vorige jaren) en toont live hoeveel pakjes er uitgeleverd zijn en hoeveel er nog in voorraad zijn. De data staat in Firebase Firestore.
 
-## Jaarlijkse checklist
+## Geldige bandjes
 
-1. **Bandjes**: `cd generate_qr && pip install qrcode pillow && python generate_qr.py --year 2026 --start 1 --end 1500`
-   → PNG's + `codes_2026.csv` in `generate_qr/images/santa_walk_2026/`.
-2. **Config**: pas in `docs/config.js` `year`, `idMin` en `idMax` aan (zelfde reeks als de gedrukte bandjes).
-3. **Rules** (eenmalig, of na wijziging): `firebase deploy --only firestore:rules`
-4. **Medewerkers** (eenmalig): Firebase console → Authentication → Sign-in method → *Email/Password* aanzetten; per scanner(groep) een gebruiker aanmaken.
-5. **Publiceren**: `docs/` naar hosting (GitHub Pages `/docs` of `firebase deploy --only hosting` met `public: docs`).
-6. **Testen**: open `…/?demo=1` (oefenmodus, schrijft niets weg) op een iPhone én een Android-toestel, scan een testbandje, test lamp en camerakeuze.
-7. **Op de dag**: elke scanner meldt aan, geeft het toestel een naam (Instellingen) en tikt op *Start camera*.
+| QR-inhoud | Herkomst | Sleutel in Firestore |
+|---|---|---|
+| `2251` … `2750` | nieuw 2026 (Orakel, enkel het nummer) | `2251` |
+| `1501` … `2250` | 2025 (Orakel drukte enkel het nummer) | `1501` |
+| `santa_walk_2024_<nr>` | 2024 | `santa_walk_2024_<nr>` |
+| `santa_walk_2023_<nr>` | 2023 | `santa_walk_2023_<nr>` |
+
+Bandjes die in `santa_walk_2023`, `santa_walk_2024` of `santa_walk_2025` staan, geven **"al uitgeleverd op de Santa Walk 20xx"**.
+
+## Eenmalige setup (± 10 min)
+
+1. **Toegangscode**: Firebase Console › Authentication › Sign-in method › *Email/Password* aanzetten.
+   Daarna bij Users › *Add user*: e-mail `scanner@santawalk.app`, wachtwoord = de toegangscode (minstens 6 tekens).
+2. **Rules**: inhoud van `firestore.rules` plakken in Console › Firestore › Rules › *Publish*
+   (of `firebase deploy --only firestore:rules`).
+3. **Voorraad** (optioneel, aanpasbaar tijdens het event): Firestore › collectie `santa_walk_settings` › document `2026` › veld `giftStock` (number) = 459.
+4. **Publiceren**: map `docs/` naar de hosting (GitHub Pages `/docs` of Firebase Hosting).
+
+## Delen met vrijwilligers
+
+Stuur de link met de code erin: `https://<jouw-site>/#code=<toegangscode>`.
+Eén tik → aangemeld; de code verdwijnt meteen uit de adresbalk en het toestel blijft aangemeld.
+Na het event: wachtwoord van `scanner@santawalk.app` wijzigen = iedereen afgemeld.
+
+Oefenen met stalen: `https://<jouw-site>/?demo=1` → leest de echte historiek, schrijft niets weg.
+
+## Database zelf aanpassen
+
+De rules gelden **enkel voor de webapp**. In de Firebase Console (en met de Admin SDK / Python-scripts) kan je altijd alles toevoegen, aanpassen en verwijderen. In de app zelf kan een foute scan binnen 2 minuten ongedaan gemaakt worden.
+
+## Volgend jaar
+
+`docs/config.js`: `year`, `plainMax`, `historyCollections` (+ vorig jaar), `prefixedYears`, `giftStock`.
+Nieuwe bandjes: `cd generate_qr && pip install qrcode pillow && python generate_qr.py --year 2027 --start 2751 --end 3250`.
 
 ## Structuur
 
 | Bestand | Rol |
 |---|---|
-| `docs/config.js` | jaar, nummerreeks, login aan/uit, Firebase-config |
-| `docs/codes.js` | validatie van de QR-inhoud |
-| `docs/scanner.js` | camera + QR-detectie (native BarcodeDetector, anders ZXing WebAssembly) |
-| `docs/db.js` | Firestore (transactie tegen dubbele scans, offline wachtrij) en demo-opslag |
-| `docs/app.js` | UI: scannen, teller, instellingen, CSV-export |
-| `docs/vendor/` | vastgepinde bibliotheken (Firebase JS 12.10.0, barcode-detector 3.2.4, zxing-wasm 3.1.7) – geen CDN nodig |
-| `firestore.rules` | enkel aanmaken toegestaan, geen wijzigen/verwijderen |
-
-## Compatibiliteit
-
-- iPhone: Safari (iOS 15+) of elke browser op iOS. Android: Chrome/Samsung Internet/Firefox. Laptop met webcam werkt ook.
-- Vereist **https** (camera). Camera-toegang wordt gevraagd bij *Start camera*.
-- Meerdere achtercamera's (ultrawide/tele): kies de hoofdcamera in de keuzelijst; de keuze wordt onthouden.
+| `docs/config.js` | jaar, geldige nummers, voorraad, login, Firebase-config |
+| `docs/codes.js` | herkenning van alle QR-formaten → unieke sleutel |
+| `docs/scanner.js` | camera + QR-detectie (ingebouwde BarcodeDetector, anders ZXing WebAssembly) |
+| `docs/db.js` | Firestore: historiek, transactie tegen dubbele scans, offline wachtrij, ongedaan maken |
+| `docs/app.js` | scannen, opzoeken, teller/voorraad, groot scherm, toestel-check, CSV-export |
+| `docs/vendor/` | vastgepinde bibliotheken (Firebase JS 12.10.0, barcode-detector 3.2.4, zxing-wasm 3.1.7) |
+| `firestore.rules` | toegang enkel met code; enkel nieuwe scans in het lopende jaar; wissen enkel binnen 2 min |
