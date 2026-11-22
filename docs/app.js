@@ -502,7 +502,7 @@ function datesOf(year) {
 }
 function availableYears() {
   const years = new Set([CONFIG.year]);
-  for (const rows of store.past.values()) for (const r of rows) if (r.at && r.edition) years.add(r.edition);
+  for (const rows of store.past.values()) for (const r of rows) if (r.at && r.edition && r.edition < CONFIG.year) years.add(r.edition);
   return [...years].sort((a, b) => b - a);
 }
 function renderYearPicks() {
@@ -588,9 +588,11 @@ $('pastStats').addEventListener('toggle', async () => {
 function renderPast() {
   const editions = new Map(); // jaar -> {count, colls: Map, nums: [], plain, prefixed}
   const thisYear = new Set(lastStats.docs.map(d => d.code));
+  const strays = [];   // scans in een oude collectie met een datum van dit jaar (testscans)
   for (const [coll, rows] of store.past) {
     for (const r of rows) {
       const y = r.edition || parseInt(coll.slice(-4), 10);
+      if (y >= CONFIG.year) { strays.push({ coll, ...r }); continue; }
       if (!editions.has(y)) editions.set(y, { count: 0, colls: new Map(), nums: [], plain: 0, prefixed: 0, keys: [] });
       const e = editions.get(y);
       e.count++;
@@ -631,7 +633,11 @@ function renderPast() {
   }
   table.append(tb);
   const totalAll = [...editions.values()].reduce((s, e) => s + e.count, 0) + lastStats.total;
-  body.append(table, el('p', 'muted small', `Totaal alle edities: ${totalAll}. Tik op een jaar voor details.`));
+  body.append(table, el('p', 'muted small', `Totaal alle edities: ${totalAll}. Editie = jaar van het scantijdstip. Tik op een jaar voor details.`));
+  if (strays.length) {
+    body.append(el('p', 'muted small', `Niet meegeteld: ${strays.length} scan(s) met een datum in ${CONFIG.year} in een oude collectie (testscans): ` +
+      strays.slice(0, 5).map(r => `${r.id} in ${r.coll} op ${fmtDate(r.at)}`).join(', ') + (strays.length > 5 ? ', …' : '') + '.'));
+  }
 }
 
 $('boardBtn').addEventListener('click', () => {

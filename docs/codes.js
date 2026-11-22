@@ -46,17 +46,13 @@ export function keyFromDocId(id, cfg) {
 }
 
 /**
- * Editie (jaar) waarin een document uit een collectie werkelijk gescand is.
- * Enige uitzondering op "jaar van de collectie": bandjes met enkel een nummer
- * bestaan pas sinds plainSince; zo'n document in een oudere collectie (bv. 1520 in
- * santa_walk_2024, gescand op 13/12/2025) hoort bij plainSince.
+ * Editie (jaar) waarin een bandje ingescand is: het jaar van het scantijdstip.
+ * Het event valt altijd in december, dus het kalenderjaar van de scan = de editie.
+ * Zonder tijdstip: het jaar van de collectie (laatste redmiddel).
  */
-export function editionOf(collectionName, key, cfg) {
-  const year = parseInt(collectionName.slice(-4), 10);
-  if (/^\d+$/.test(key) && parseInt(key, 10) >= cfg.uniqueFrom) return Math.max(year, cfg.plainSince);
-  const m = key.match(/^santa_walk_(\d{4})_/);
-  if (m && parseInt(m[1], 10) > year) return parseInt(m[1], 10);
-  return year;
+export function editionOf(collectionName, key, cfg, at = null) {
+  if (at instanceof Date && !isNaN(at)) return at.getFullYear();
+  return parseInt(collectionName.slice(-4), 10);
 }
 
 /**

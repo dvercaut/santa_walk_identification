@@ -75,7 +75,7 @@ export class FirestoreStore {
     }
     const rows = raw.map(r => {
       const key = keyFromDocId(r.id, this.cfg);
-      return { id: r.id, key, edition: key ? editionOf(name, key, this.cfg) : null, at: r.at };
+      return { id: r.id, key, edition: editionOf(name, key, this.cfg, r.at), at: r.at };
     });
     this.past.set(name, rows);
     return rows;
