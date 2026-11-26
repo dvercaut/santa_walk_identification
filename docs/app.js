@@ -1,6 +1,11 @@
 import { CONFIG } from './config.js';
 import { parseCode, searchKeys } from './codes.js';
-import { QrScanner } from './scanner.js';
+import { QrScanner, selfTest } from './scanner.js';
+
+// Fouten bijhouden voor de toestel-check (screenshot = debuginfo).
+const recentErrors = [];
+addEventListener('error', e => recentErrors.push(String(e.message || e.error || e).slice(0, 120)));
+addEventListener('unhandledrejection', e => recentErrors.push(String(e.reason?.code || e.reason?.message || e.reason).slice(0, 120)));
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -52,7 +57,14 @@ let role = 'scanner';
 async function tryLogin(code) {
   $('loginError').textContent = '';
   try {
-    await store.login(code);
+    try {
+      await store.login(code);
+    } catch (e) {
+      // Mailprogramma's knippen leestekens op het einde van een link vaak weg
+      // ("…#code=santa-walk-2026!" wordt "…#code=santa-walk-2026"): probeer opnieuw met "!".
+      if (/invalid|wrong-password/.test(e.code || '') && code && !/[!?.]$/.test(code)) await store.login(code + '!');
+      else throw e;
+    }
   } catch (err) {
     const map = {
       'auth/invalid-credential': 'Foute toegangscode.',
@@ -72,6 +84,20 @@ $('logoutBtn').addEventListener('click', () => store.logout());
 // Link met code: https://…/#code=XXXX → automatisch aanmelden, daarna code uit de adresbalk halen.
 const hashCode = new URLSearchParams(location.hash.slice(1)).get('code');
 if (hashCode) history.replaceState(null, '', location.pathname + location.search);
+
+// Ingebouwde browser van een andere app (mail, WhatsApp, Facebook, …): camera werkt daar vaak niet.
+function inAppBrowser() {
+  const ua = navigator.userAgent;
+  if (/FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|WhatsApp|Snapchat|LinkedInApp|GSA\/|Outlook|; wv\)/i.test(ua)) return true;
+  return /iPhone|iPad|iPod/.test(ua) && !/Safari\//.test(ua);   // iOS-webview zonder Safari-token
+}
+const IN_APP = inAppBrowser();
+$('inAppBanner').hidden = !IN_APP;
+$('copyLinkBtn').addEventListener('click', async () => {
+  const link = location.origin + location.pathname + location.search + (hashCode ? `#code=${hashCode}` : '');
+  try { await navigator.clipboard.writeText(link); $('copyLinkBtn').textContent = '✔ Gekopieerd – plak in Safari/Chrome'; }
+  catch (_) { prompt('Kopieer deze link en open hem in Safari of Chrome:', link); }
+});
 
 // ---------- Tabs ----------
 async function ensurePast() {
@@ -407,29 +433,61 @@ document.addEventListener('visibilitychange', async () => {
   scanner.reacquireWakeLock();
 });
 
-// ---------- Toestel-check ----------
-$('checkBtn').addEventListener('click', async () => {
-  const yes = v => (v ? '✔' : '✖');
-  const caps = scanner.capabilities();
+// ---------- Toestel-check (ook zonder aanmelden) ----------
+function placeCheck(where) {
+  (where === 'login' ? $('loginCheckSlot') : $('tab-settings')).insertBefore($('checkCard'), where === 'login' ? null : $('roleInfo'));
+}
+$('loginCheckBtn').addEventListener('click', () => { placeCheck('login'); $('checkCard').hidden = false; $('checkCard').scrollIntoView({ behavior: 'smooth' }); runCheck(); });
+$('checkBtn').addEventListener('click', runCheck);
+
+async function testCamera() {
+  if (scanner.running && scanner.track) return { ok: true, info: `${$('video').videoWidth}×${$('video').videoHeight} (actief)` };
+  if (!QrScanner.supported()) return { ok: false, info: window.isSecureContext ? 'geen camera-API in deze browser' : 'geen https' };
+  try {
+    const st = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' } } });
+    const s = st.getVideoTracks()[0].getSettings();
+    st.getTracks().forEach(t => t.stop());
+    return { ok: true, info: `${s.width || '?'}×${s.height || '?'}` };
+  } catch (e) {
+    return { ok: false, info: `${e.name}${e.name === 'NotAllowedError' ? ' (toegang geweigerd)' : ''}` };
+  }
+}
+
+async function runCheck() {
+  unlockAudio();
+  $('checkBtn').disabled = true;
+  const rows = [];
+  const add = (k, v, bad = false) => rows.push([k, v, bad]);
+  const ua = navigator.userAgent;
+  const os = /iPhone|iPad|iPod/.test(ua) ? `iOS ${(/OS (\d+[_\d]*)/.exec(ua)?.[1] || '?').replace(/_/g, '.')}` : /Android [\d.]+/.exec(ua)?.[0] || navigator.platform;
+  const model = /Android[^;]*;\s*([^;)]+)/.exec(ua)?.[1] || (/iPhone/.test(ua) ? 'iPhone' : '');
+  add('Toestel', `${os}${model ? ` – ${model}` : ''}`);
+  add('Browser', ua.match(/(CriOS|FxiOS|EdgiOS|EdgA|Edg|SamsungBrowser|MiuiBrowser|XiaoMi|OPR|Firefox|Chrome|Version)\/[\d.]+/g)?.join(' ') || '?');
+  add('Ingebouwde browser van andere app', IN_APP ? '✖ ja – open in Safari/Chrome' : '✔ nee', IN_APP);
+  add('Beveiligde verbinding (https)', window.isSecureContext ? '✔' : '✖', !window.isSecureContext);
+  add('Online', navigator.onLine ? '✔' : '✖', !navigator.onLine);
+  add('Aangemeld', store.auth?.currentUser || DEMO === 'local' ? `✔ ${role}` : '– nog niet');
+  const cam = await testCamera();
+  add('Camera', cam.ok ? `✔ ${cam.info}` : `✖ ${cam.info}`, !cam.ok);
   let cams = [];
   try { cams = await scanner.listCameras(); } catch (_) {}
-  const ua = navigator.userAgent;
-  fillTable('checkTable', [
-    ['Browser', ua.match(/(CriOS|FxiOS|EdgiOS|Edg|SamsungBrowser|Firefox|Chrome|Version)\/[\d.]+/g)?.join(' ') || ua.slice(0, 60)],
-    ['Toestel', /iPhone|iPad/.test(ua) ? 'iOS' : /Android [\d.]+/.exec(ua)?.[0] || navigator.platform],
-    ['Beveiligde verbinding (https)', yes(window.isSecureContext)],
-    ['Camera-toegang', yes(QrScanner.supported())],
-    ['Camera actief', yes(scanner.running)],
-    ['Aantal camera\'s', cams.length || '?'],
-    ['Scan-engine', scanner.engine === 'native' ? 'ingebouwd (snel)' : scanner.engine === 'wasm' ? 'ZXing WebAssembly' : 'start eerst de camera'],
-    ['Resolutie', scanner.track ? `${$('video').videoWidth}×${$('video').videoHeight}` : '–'],
-    ['Lamp', yes(caps.torch)],
-    ['Zoom', yes(caps.zoom)],
-    ['Scherm blijft aan', yes('wakeLock' in navigator)],
-    ['Trillen', yes('vibrate' in navigator)],
-    ['Online', yes(navigator.onLine)],
-  ]);
-});
+  add("Aantal camera's", cams.length || '?');
+  try {
+    const t = await selfTest();
+    add('Scanner (zelftest)', t.ok ? `✔ ${t.engine === 'native' ? 'ingebouwd' : 'WebAssembly'} – ${t.loadMs + t.decodeMs} ms` : `✖ ${t.engine}: testcode niet gelezen`, !t.ok);
+  } catch (e) {
+    add('Scanner (zelftest)', `✖ ${String(e.message || e).slice(0, 80)}`, true);
+  }
+  const caps = scanner.capabilities();
+  if (scanner.running) { add('Lamp', caps.torch ? '✔' : '–'); add('Zoom', caps.zoom ? '✔' : '–'); }
+  add('Scherm blijft aan', 'wakeLock' in navigator ? '✔' : '–');
+  add('Fouten', recentErrors.length ? recentErrors.slice(-3).join(' | ') : 'geen', recentErrors.length > 0);
+  add('Versie', document.querySelector('meta[name="sw-version"]')?.content || '–');
+  $('checkTable').tBodies[0].replaceChildren(...rows.map(([k, v, bad]) => {
+    const tr = el('tr'); tr.append(el('td', null, k), el('td', `num${bad ? ' bad' : ''}`, v)); return tr;
+  }));
+  $('checkBtn').disabled = false;
+}
 
 // ---------- Teller ----------
 function bandType(d) {
@@ -697,6 +755,8 @@ store.onUser(user => {
   const needLogin = CONFIG.requireLogin && DEMO !== 'local' && !user;
   $('loginView').hidden = !needLogin;
   $('mainView').hidden = needLogin;
+  placeCheck(needLogin ? 'login' : 'settings');
+  if (needLogin) $('checkCard').hidden = true; else $('checkCard').hidden = false;
   if (!needLogin && !unwatch) afterLogin();
   if (needLogin) {
     if (unwatch) { unwatch(); unwatch = null; }

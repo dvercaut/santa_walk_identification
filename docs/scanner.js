@@ -5,6 +5,22 @@
 
 const WASM_URL = new URL('./vendor/zxing/zxing_reader.wasm', import.meta.url).href;
 
+let sharedDetector = null;
+/** Eén detector per pagina, ook gebruikt door de zelftest. */
+export function getDetector() { return (sharedDetector ||= createDetector()); }
+
+/** Zelftest zonder camera: decodeert test-qr.png (inhoud "2251"). */
+export async function selfTest() {
+  const t0 = performance.now();
+  const { detector, engine } = await getDetector();
+  const t1 = performance.now();
+  const img = new Image();
+  img.src = new URL('./test-qr.png', import.meta.url).href;
+  await img.decode();
+  const res = await detector.detect(img);
+  return { engine, ok: res[0]?.rawValue === '2251', loadMs: Math.round(t1 - t0), decodeMs: Math.round(performance.now() - t1) };
+}
+
 async function createDetector() {
   if ('BarcodeDetector' in window) {
     try {
@@ -65,7 +81,7 @@ export class QrScanner {
   }
 
   async start(deviceId = this.deviceId) {
-    this._detectorPromise ||= createDetector();
+    this._detectorPromise ||= getDetector();
     await this._stopStream();
 
     const video = { width: { ideal: 1280 }, height: { ideal: 720 } };

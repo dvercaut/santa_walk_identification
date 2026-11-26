@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Santa Walk">
   <meta name="referrer" content="no-referrer">
+  <meta name="sw-version" content="2026-11-26">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://*.firebaseapp.com">
   <title>Santa Walk – Scanner</title>
   <link rel="icon" type="image/png" href="santa_claus.png">
@@ -24,6 +25,12 @@
   </header>
   <div id="demoBanner" class="demo" hidden>OEFENMODUS – scans worden niet opgeslagen</div>
   <div id="historyBanner" class="warn" hidden></div>
+  <div id="inAppBanner" class="warn inapp" hidden>
+    <strong>⚠ Open deze pagina in Safari of Chrome.</strong>
+    Je gebruikt nu de browser van een andere app (mail, WhatsApp, …), en daar werkt de camera vaak niet.
+    Tik rechtsboven of onderaan op ⋯ / ⋮ › <em>Openen in Safari</em> of <em>Openen in Chrome</em>.
+    <button id="copyLinkBtn" class="mini" type="button">Kopieer link</button>
+  </div>
 
   <!-- Toegangscode -->
   <section id="loginView" class="view" hidden>
@@ -34,7 +41,9 @@
       <input id="loginCode" type="password" autocomplete="current-password" aria-label="Toegangscode" required>
       <button type="submit" class="primary">Start</button>
       <p id="loginError" class="error" role="alert"></p>
+      <button id="loginCheckBtn" type="button" class="linklike">Werkt het niet? Test dit toestel</button>
     </form>
+    <div id="loginCheckSlot"></div>
   </section>
 
   <!-- Naam van dit toestel -->
@@ -165,10 +174,10 @@
         <label class="row"><input id="soundToggle" type="checkbox"> Geluid bij scan</label>
         <label class="row"><input id="vibrateToggle" type="checkbox"> Trillen bij scan</label>
       </div>
-      <div class="card">
+      <div id="checkCard" class="card">
         <h3>Toestel-check</h3>
-        <p class="muted small">Test of dit toestel geschikt is (camera, scanner, lamp). Start eerst de camera.</p>
-        <button id="checkBtn">Controleer toestel</button>
+        <p class="muted small">Test of dit toestel geschikt is: camera, scanner, verbinding. Lukt het niet? Stuur een screenshot van deze pagina.</p>
+        <button id="checkBtn" class="primary">Controleer toestel</button>
         <table id="checkTable" class="check"><tbody></tbody></table>
       </div>
       <div class="card muted small">

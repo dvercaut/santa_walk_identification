@@ -166,3 +166,9 @@ details.sub summary { cursor: pointer; color: var(--muted); font-size: 14px; mar
 .swatch { width: 14px; height: 4px; border-radius: 2px; display: inline-block; }
 #hourInfo div { margin-top: 3px; }
 button.danger { color: var(--bad); border-color: #e3b5b1; }
+
+.inapp { font-size: 15px; line-height: 1.45; }
+.inapp .mini { margin-left: 6px; }
+.linklike { background: none; border: 0; color: var(--pine); text-decoration: underline; min-height: 36px; margin-top: 6px; width: 100%; }
+.check td.bad { color: var(--bad); font-weight: 700; }
+#checkBtn { width: 100%; margin-bottom: 8px; }
